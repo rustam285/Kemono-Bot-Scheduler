@@ -1,0 +1,14 @@
+{
+  "name": "vk-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "setup": "pip install -r backend/requirements.txt && npm install --prefix frontend",
+    "start": "concurrently --names \"backend,frontend\" --prefix-colors \"cyan,magenta\" \"python backend/startup.py\" \"npm run dev --prefix frontend\"",
+    "start:backend": "python backend/startup.py",
+    "start:frontend": "npm run dev --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
