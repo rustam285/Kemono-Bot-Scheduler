@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,20 +15,20 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
-from config import COOKIES_PATH
+from config import COOKIES_PATH, MEDIA_DEGRADED_THRESHOLD, MEDIA_DEGRADED_WINDOW
 from services.settings_store import get_settings
 
 logger = structlog.get_logger(__name__)
 
-TEMP_BASE = Path(__import__("tempfile").gettempdir()) / "vk_scheduler"
+TEMP_BASE = Path(tempfile.gettempdir()) / "vk_scheduler"
 TEMP_BASE.mkdir(parents=True, exist_ok=True)
 
 TWITTER_DOMAINS = {"twitter.com", "x.com", "t.co"}
 _twitter_lock = asyncio.Lock()
 
 _error_counts: dict[str, list[float]] = {}
-DEGRADED_THRESHOLD = 3
-DEGRADED_WINDOW = 300
+DEGRADED_THRESHOLD = MEDIA_DEGRADED_THRESHOLD
+DEGRADED_WINDOW = MEDIA_DEGRADED_WINDOW
 
 
 def _domain_from_url(url: str) -> str:

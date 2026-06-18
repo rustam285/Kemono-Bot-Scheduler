@@ -6,10 +6,12 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from services.settings_store import get_settings
 from services.supabase_client import (
     get_posts_without_media,
     get_scheduled_post_by_vk_id,
     get_scheduled_posts,
+    insert_scheduled_post,
     update_scheduled_post,
 )
 from services.vk_api import VkApiError, call_method
@@ -18,8 +20,7 @@ router = APIRouter(prefix="/scheduled", tags=["scheduled"])
 
 
 async def _sync_with_vk() -> list[dict[str, Any]]:
-    settings_mod = __import__("services.settings_store", fromlist=["get_settings"])
-    settings = await settings_mod.get_settings()
+    settings = await get_settings()
     group_id = settings.get("vk_group_id")
     if not group_id:
         raise HTTPException(400, "VK Group ID is not configured")
@@ -59,7 +60,6 @@ async def _sync_with_vk() -> list[dict[str, Any]]:
         has_media = any(a.get("type") in ("photo", "video") for a in attachments)
 
         if vk_id not in db_by_vk_id:
-            from services.supabase_client import insert_scheduled_post
             source_urls = []
             text = vk_post.get("text", "")
             for line in text.split("\n"):
@@ -164,8 +164,7 @@ async def update_post(vk_post_id: int, body: PostUpdate):
     if not post:
         raise HTTPException(404, "Post not found")
 
-    settings_mod = __import__("services.settings_store", fromlist=["get_settings"])
-    settings = await settings_mod.get_settings()
+    settings = await get_settings()
     group_id = settings.get("vk_group_id")
 
     has_media_change = body.media_items is not None and body.media_items != post.get("media_attachments")
@@ -209,7 +208,6 @@ async def update_post(vk_post_id: int, body: PostUpdate):
                 "has_media": len(body.media_items) > 0 if body.media_items else post.get("has_media"),
             }
             await update_scheduled_post(vk_post_id, {"status": "deleted"})
-            from services.supabase_client import insert_scheduled_post
             await insert_scheduled_post({k: v for k, v in updates.items() if v is not None})
             return {"status": "ok", "new_vk_post_id": new_vk_id}
 
@@ -246,8 +244,7 @@ async def delete_post(vk_post_id: int):
     if not post:
         raise HTTPException(404, "Post not found")
 
-    settings_mod = __import__("services.settings_store", fromlist=["get_settings"])
-    settings = await settings_mod.get_settings()
+    settings = await get_settings()
     group_id = settings.get("vk_group_id")
 
     try:

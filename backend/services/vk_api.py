@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any, Optional
 
 import httpx
 import structlog
 
-from config import VK_API_VERSION
+from config import VK_API_MAX_RETRIES, VK_API_RETRY_DELAYS, VK_API_VERSION
 from services.settings_store import get_settings
 
 logger = structlog.get_logger(__name__)
 
 BASE_URL = "https://api.vk.com/method"
-MAX_RETRIES = 3
-RETRY_DELAYS = [1, 4, 16]
 
 
 class VkApiError(Exception):
@@ -28,7 +25,7 @@ async def _call_method(
     method: str,
     params: dict[str, Any],
     token: str,
-    retries: int = MAX_RETRIES,
+    retries: int = VK_API_MAX_RETRIES,
 ) -> dict[str, Any]:
     all_params = {
         **params,
@@ -48,7 +45,7 @@ async def _call_method(
                 code = err.get("error_code", 0)
                 msg = err.get("error_msg", "Unknown error")
                 if code == 6:
-                    delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+                    delay = VK_API_RETRY_DELAYS[min(attempt, len(VK_API_RETRY_DELAYS) - 1)]
                     logger.warning("vk_api.too_many_requests", method=method, delay=delay)
                     await asyncio.sleep(delay)
                     continue
@@ -58,7 +55,7 @@ async def _call_method(
 
         except httpx.HTTPError as exc:
             last_exc = exc
-            delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+            delay = VK_API_RETRY_DELAYS[min(attempt, len(VK_API_RETRY_DELAYS) - 1)]
             logger.warning("vk_api.http_error", method=method, error=str(exc), delay=delay)
             await asyncio.sleep(delay)
 

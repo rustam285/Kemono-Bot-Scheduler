@@ -9,6 +9,7 @@ from typing import Any, Optional
 import pytz
 import structlog
 
+from services.settings_store import get_settings
 from services.vk_api import VkApiError, call_method
 
 logger = structlog.get_logger(__name__)
@@ -138,8 +139,7 @@ async def generate_preview(
     timezone_name: str,
     session_key: Optional[str],
 ) -> tuple[str, list[dict[str, Any]]]:
-    settings_mod = __import__("services.settings_store", fromlist=["get_settings"])
-    settings = await settings_mod.get_settings()
+    settings = await get_settings()
     group_id = settings.get("vk_group_id")
     if not group_id:
         raise ValueError("VK Group ID is not configured")

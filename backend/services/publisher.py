@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import structlog
 
+from config import VK_MAX_SLOT_ATTEMPTS, VK_SLOT_DELAY_SECONDS
 from services.media_downloader import (
     TEMP_BASE,
     cleanup_old_temp_dirs,
@@ -142,7 +143,7 @@ async def publish_processor(task: Task) -> None:
                 wall_params["attachments"] = ",".join(attachments)
 
             vk_post_id = None
-            for slot_attempt in range(5):
+            for slot_attempt in range(VK_MAX_SLOT_ATTEMPTS):
                 if publish_date:
                     wall_params["publish_date"] = publish_date
 
@@ -152,7 +153,7 @@ async def publish_processor(task: Task) -> None:
                     break
                 except VkApiError as slot_exc:
                     if slot_exc.code == 214 and publish_date:
-                        publish_date += 1800
+                        publish_date += VK_SLOT_DELAY_SECONDS
                         new_dt = datetime.fromtimestamp(publish_date, tz=timezone.utc)
                         logger.info("publish.slot_occupied", new_time=new_dt.isoformat(), attempt=slot_attempt + 1)
                         scheduled_at = new_dt.isoformat()

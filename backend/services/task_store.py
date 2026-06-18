@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 
 import structlog
 
-from config import MAX_CONCURRENT_TASKS
+from config import DATA_DIR, MAX_CONCURRENT_TASKS, TASK_CLEANUP_INTERVAL, TASK_MAX_AGE_SECONDS
 
 logger = structlog.get_logger(__name__)
+
+TASKS_PATH = DATA_DIR / "tasks.json"
 
 
 class TaskStatus(str, Enum):
@@ -21,6 +25,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     ERROR = "error"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
 
 class TaskStage(str, Enum):
@@ -79,6 +84,28 @@ class Task:
             ],
         }
 
+    def to_persist(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "status": self.status.value,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "progress": {
+                "current": self.progress.current,
+                "total": self.progress.total,
+                "stage": self.progress.stage,
+            },
+            "results": [
+                {
+                    "post_id": r.post_id,
+                    "vk_post_id": r.vk_post_id,
+                    "status": r.status,
+                    "error": r.error,
+                }
+                for r in self.results
+            ],
+        }
+
 
 _tasks: dict[str, Task] = {}
 _semaphore: Optional[asyncio.Semaphore] = None
@@ -92,6 +119,47 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _semaphore
 
 
+def _persist_tasks() -> None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        data = [t.to_persist() for t in _tasks.values()]
+        TASKS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("task_store.persist_failed", error=str(exc))
+
+
+def _load_tasks() -> None:
+    if not TASKS_PATH.exists():
+        return
+    try:
+        data = json.loads(TASKS_PATH.read_text(encoding="utf-8"))
+        for item in data:
+            task = Task(
+                task_id=item["task_id"],
+                status=TaskStatus(item["status"]),
+                started_at=item.get("started_at"),
+                finished_at=item.get("finished_at"),
+            )
+            if "progress" in item:
+                task.progress.current = item["progress"].get("current", 0)
+                task.progress.total = item["progress"].get("total", 0)
+                task.progress.stage = item["progress"].get("stage", TaskStage.DOWNLOADING_MEDIA)
+            for r in item.get("results", []):
+                task.results.append(PostResult(
+                    post_id=r["post_id"],
+                    vk_post_id=r.get("vk_post_id"),
+                    status=r.get("status", "pending"),
+                    error=r.get("error"),
+                ))
+            if task.status == TaskStatus.PROCESSING:
+                task.status = TaskStatus.INTERRUPTED
+                task.finished_at = datetime.now(timezone.utc).isoformat()
+            _tasks[task.task_id] = task
+        logger.info("task_store.loaded", count=len(_tasks))
+    except Exception as exc:
+        logger.warning("task_store.load_failed", error=str(exc))
+
+
 def create_task(posts_data: list[dict[str, Any]]) -> Task:
     task_id = str(uuid.uuid4())
     task = Task(
@@ -101,6 +169,7 @@ def create_task(posts_data: list[dict[str, Any]]) -> Task:
         results=[PostResult(post_id=p.get("id", str(uuid.uuid4()))) for p in posts_data],
     )
     _tasks[task_id] = task
+    _persist_tasks()
     logger.info("task.created", task_id=task_id, total_posts=len(posts_data))
     return task
 
@@ -119,6 +188,7 @@ async def cancel_task(task_id: str) -> tuple[bool, str]:
             task.status = TaskStatus.CANCELLED
             task.finished_at = datetime.now(timezone.utc).isoformat()
             task._cancel_event.set()
+            _persist_tasks()
             logger.info("task.cancelled", task_id=task_id)
             return True, ""
         elif task.status == TaskStatus.PROCESSING:
@@ -141,6 +211,7 @@ async def run_task(task: Task, processor: Any) -> None:
                 return
             task.status = TaskStatus.PROCESSING
             task.started_at = datetime.now(timezone.utc).isoformat()
+            _persist_tasks()
 
         try:
             await processor(task)
@@ -149,21 +220,24 @@ async def run_task(task: Task, processor: Any) -> None:
                     task.status = TaskStatus.COMPLETED
                     task.finished_at = datetime.now(timezone.utc).isoformat()
                     task.progress.stage = TaskStage.DONE
+                    _persist_tasks()
         except Exception as exc:
             async with task._lock:
                 task.status = TaskStatus.ERROR
                 task.finished_at = datetime.now(timezone.utc).isoformat()
+                _persist_tasks()
             logger.error("task.failed", task_id=task.task_id, error=str(exc))
 
 
 async def start_cleanup_loop() -> None:
     global _cleanup_task
+    _load_tasks()
     _cleanup_task = asyncio.create_task(_cleanup_loop())
 
 
 async def _cleanup_loop() -> None:
     while True:
-        await asyncio.sleep(900)
+        await asyncio.sleep(TASK_CLEANUP_INTERVAL)
         _cleanup_old_tasks()
 
 
@@ -175,7 +249,7 @@ def _cleanup_old_tasks() -> None:
             try:
                 finished = datetime.fromisoformat(task.finished_at)
                 age = now - finished.timestamp()
-                if age > 3600:
+                if age > TASK_MAX_AGE_SECONDS:
                     to_remove.append(task_id)
             except Exception:
                 pass
@@ -184,4 +258,5 @@ def _cleanup_old_tasks() -> None:
         del _tasks[tid]
 
     if to_remove:
+        _persist_tasks()
         logger.info("task.cleanup", removed=len(to_remove))

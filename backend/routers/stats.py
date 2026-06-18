@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 
+from services.settings_store import get_settings
 from services.supabase_client import get_scheduled_posts
 from services.vk_api import VkApiError, call_method
 
@@ -13,8 +14,7 @@ router = APIRouter(tags=["stats"])
 
 @router.get("/stats")
 async def get_stats():
-    settings_mod = __import__("services.settings_store", fromlist=["get_settings"])
-    settings = await settings_mod.get_settings()
+    settings = await get_settings()
     group_id = settings.get("vk_group_id")
     owner_id = settings.get("vk_owner_id")
 
