@@ -148,7 +148,7 @@ function Step2Schedule({
         </p>
       </div>
 
-      <div className={`grid grid-cols-2 gap-6 icon-${postType}`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 icon-${postType}`}>
         <div className="space-y-2">
           <Label>Дата начала</Label>
           <Input

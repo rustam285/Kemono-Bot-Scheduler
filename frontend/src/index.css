@@ -98,3 +98,17 @@
   .icon-fursuit { --icon-color: %23e07a5f; }
   .icon-video { --icon-color: %23ec4899; }
 }
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+@media (max-width: 768px) {
+  .mobile-sidebar-open { overflow: hidden; }
+}
+
+@media (min-width: 769px) {
+  .bottom-nav-mobile { display: none !important; }
+  .burger-mobile { display: none !important; }
+}

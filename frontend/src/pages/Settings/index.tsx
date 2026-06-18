@@ -115,7 +115,7 @@ function Settings() {
   if (isLoading) return <div className="text-muted-foreground text-center py-12">Загрузка...</div>;
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-4 sm:space-y-6">
       <h1 className="text-2xl font-bold">Настройки</h1>
 
       <Card>
@@ -133,7 +133,7 @@ function Settings() {
               onChange={(e) => setVkToken(e.target.value)}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Group ID</Label>
               <Input value={vkGroupId} onChange={(e) => setVkGroupId(e.target.value)} placeholder="123456" />
@@ -187,7 +187,7 @@ function Settings() {
           <CardDescription>Параллельные загрузчики, лимиты размеров, таймаут</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Параллельных загрузчиков (1–10)</Label>
               <Input type="number" min={1} max={10} value={maxWorkers} onChange={(e) => setMaxWorkers(e.target.value)} />

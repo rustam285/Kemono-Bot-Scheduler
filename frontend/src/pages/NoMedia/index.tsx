@@ -46,80 +46,137 @@ function NoMedia() {
           <p className="text-sm text-muted-foreground">Нет постов без прикреплённых медиафайлов</p>
         </div>
       ) : (
-        <div className="border border-border rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-muted/50">
-                <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Дата</th>
-                <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Тип</th>
-                <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Текст</th>
-                <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">VK</th>
-                <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              {posts.map((post: any) => {
-                const dt = post.scheduled_at ? new Date(post.scheduled_at) : null;
-                return (
-                  <tr key={post.vk_post_id || post.id} className="border-t border-border hover:bg-muted/20">
-                    <td className="px-4 py-3 text-sm">
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block border border-border rounded-lg overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-muted/50">
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Дата</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Тип</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Текст</th>
+                  <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">VK</th>
+                  <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {posts.map((post: any) => {
+                  const dt = post.scheduled_at ? new Date(post.scheduled_at) : null;
+                  return (
+                    <tr key={post.vk_post_id || post.id} className="border-t border-border hover:bg-muted/20">
+                      <td className="px-4 py-3 text-sm">
+                        {dt && (
+                          <>
+                            <div>{dt.toLocaleDateString("ru-RU")}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {dt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          </>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={TYPE_VARIANT[post.post_type] || "default"} className="text-xs">
+                          {post.post_type}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">
+                        {post.post_text}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {post.vk_post_id && (
+                          <a
+                            href={`https://vk.com/wall-${post.vk_post_id}`}
+                            target="_blank"
+                            rel="noopener"
+                            className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Открыть
+                          </a>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => navigate("/create/art")}
+                          >
+                            <Plus className="w-3.5 h-3.5 mr-1" />
+                            Добавить
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-red-400"
+                            onClick={() => handleDelete(post.vk_post_id)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {posts.map((post: any) => {
+              const dt = post.scheduled_at ? new Date(post.scheduled_at) : null;
+              return (
+                <div key={post.vk_post_id || post.id} className="bg-card border border-border rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
                       {dt && (
-                        <>
-                          <div>{dt.toLocaleDateString("ru-RU")}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {dt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
-                          </div>
-                        </>
+                        <span className="text-xs text-muted-foreground">
+                          {dt.toLocaleDateString("ru-RU")} {dt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={TYPE_VARIANT[post.post_type] || "default"} className="text-xs">
+                      <Badge variant={TYPE_VARIANT[post.post_type] || "default"} className="text-[10px]">
                         {post.post_type}
                       </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">
-                      {post.post_text}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {post.vk_post_id && (
-                        <a
-                          href={`https://vk.com/wall-${post.vk_post_id}`}
-                          target="_blank"
-                          rel="noopener"
-                          className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Открыть
-                        </a>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => navigate("/create/art")}
-                        >
-                          <Plus className="w-3.5 h-3.5 mr-1" />
-                          Добавить
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-red-400"
-                          onClick={() => handleDelete(post.vk_post_id)}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => navigate("/create/art")}
+                      >
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Добавить
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-red-400"
+                        onClick={() => handleDelete(post.vk_post_id)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{post.post_text}</p>
+                  {post.vk_post_id && (
+                    <a
+                      href={`https://vk.com/wall-${post.vk_post_id}`}
+                      target="_blank"
+                      rel="noopener"
+                      className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Открыть в VK
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );

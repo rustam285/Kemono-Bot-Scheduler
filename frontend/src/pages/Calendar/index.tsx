@@ -38,15 +38,15 @@ function Calendar() {
 
   return (
     <div className="flex gap-6">
-      <div className="flex-1">
-        <div className="flex items-center justify-between mb-6">
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
           <h1 className="text-2xl font-bold">Все посты</h1>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={prevMonth}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <Select value={String(month)} onValueChange={(v) => { setMonth(Number(v)); setSelectedDate(null); }}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-32 sm:w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -56,7 +56,7 @@ function Calendar() {
               </SelectContent>
             </Select>
             <Select value={String(year)} onValueChange={(v) => { setYear(Number(v)); setSelectedDate(null); }}>
-              <SelectTrigger className="w-24">
+              <SelectTrigger className="w-20 sm:w-24">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

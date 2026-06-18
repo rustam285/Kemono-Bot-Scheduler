@@ -63,97 +63,105 @@ function DayDetail({ date, onClose }: DayDetailProps) {
   });
 
   return (
-    <div className="w-96 border-l border-border bg-card min-h-[calc(100vh-57px)] p-4 overflow-y-auto">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold text-sm capitalize">{displayDate}</h2>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
-          <X className="w-4 h-4" />
-        </Button>
-      </div>
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={onClose} />
 
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground">Загрузка...</p>
-      ) : dayPosts.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Нет постов на этот день</p>
-      ) : (
-        <div className="space-y-3">
-          {dayPosts.map((post: any) => {
-            const isEditing = editingId === post.vk_post_id;
-            const time = post.scheduled_at
-              ? new Date(post.scheduled_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
-              : "";
-
-            return (
-              <div key={post.vk_post_id || post.id} className="bg-background border border-border rounded-lg p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{time}</span>
-                    <Badge variant={TYPE_VARIANT[post.post_type] || "default"} className="text-[10px]">
-                      {post.post_type}
-                    </Badge>
-                  </div>
-                  <div className="flex gap-1">
-                    {isEditing ? (
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => saveEdit(post.vk_post_id)}>
-                        <Check className="w-3.5 h-3.5 text-green-400" />
-                      </Button>
-                    ) : (
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => startEdit(post)}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400" onClick={() => handleDelete(post.vk_post_id)}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-
-                {post.media_attachments && post.media_attachments.length > 0 && (
-                  <div className="flex gap-1">
-                    {post.media_attachments.slice(0, 4).map((m: any, i: number) => (
-                      <div key={i} className="w-12 h-12 rounded bg-muted flex items-center justify-center text-[10px] text-muted-foreground">
-                        {m.type}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {isEditing ? (
-                  <div className="space-y-2">
-                    <Input
-                      type="datetime-local"
-                      value={editDate}
-                      onChange={(e) => setEditDate(e.target.value)}
-                      className="text-xs h-8"
-                    />
-                    <Textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      rows={3}
-                      className="text-xs"
-                    />
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground line-clamp-3">{post.post_text}</p>
-                )}
-
-                {post.vk_post_id && (
-                  <a
-                    href={`https://vk.com/wall-${post.vk_post_id}`}
-                    target="_blank"
-                    rel="noopener"
-                    className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    VK
-                  </a>
-                )}
-              </div>
-            );
-          })}
+      {/* Drawer */}
+      <div className="fixed top-0 right-0 bottom-0 w-full max-w-[90vw] md:w-96 md:max-w-none md:static md:top-auto md:right-auto md:bottom-auto bg-card border-l border-border z-50 md:z-auto flex flex-col overflow-hidden md:translate-x-0">
+        <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
+          <h2 className="font-semibold text-sm capitalize">{displayDate}</h2>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </Button>
         </div>
-      )}
-    </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Загрузка...</p>
+          ) : dayPosts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Нет постов на этот день</p>
+          ) : (
+            <div className="space-y-3">
+              {dayPosts.map((post: any) => {
+                const isEditing = editingId === post.vk_post_id;
+                const time = post.scheduled_at
+                  ? new Date(post.scheduled_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+                  : "";
+
+                return (
+                  <div key={post.vk_post_id || post.id} className="bg-background border border-border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{time}</span>
+                        <Badge variant={TYPE_VARIANT[post.post_type] || "default"} className="text-[10px]">
+                          {post.post_type}
+                        </Badge>
+                      </div>
+                      <div className="flex gap-1">
+                        {isEditing ? (
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => saveEdit(post.vk_post_id)}>
+                            <Check className="w-3.5 h-3.5 text-green-400" />
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => startEdit(post)}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400" onClick={() => handleDelete(post.vk_post_id)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {post.media_attachments && post.media_attachments.length > 0 && (
+                      <div className="flex gap-1">
+                        {post.media_attachments.slice(0, 4).map((m: any, i: number) => (
+                          <div key={i} className="w-12 h-12 rounded bg-muted flex items-center justify-center text-[10px] text-muted-foreground">
+                            {m.type}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {isEditing ? (
+                      <div className="space-y-2">
+                        <Input
+                          type="datetime-local"
+                          value={editDate}
+                          onChange={(e) => setEditDate(e.target.value)}
+                          className="text-xs h-8"
+                        />
+                        <Textarea
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          rows={3}
+                          className="text-xs"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground line-clamp-3">{post.post_text}</p>
+                    )}
+
+                    {post.vk_post_id && (
+                      <a
+                        href={`https://vk.com/wall-${post.vk_post_id}`}
+                        target="_blank"
+                        rel="noopener"
+                        className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        VK
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 

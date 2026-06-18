@@ -34,14 +34,14 @@ function CalendarGrid({ year, month, days, selectedDate, onSelectDate }: Calenda
     <div className="border border-border rounded-lg overflow-hidden">
       <div className="grid grid-cols-7 bg-muted/50">
         {WEEKDAYS.map((wd) => (
-          <div key={wd} className="text-center text-xs font-medium text-muted-foreground py-2 border-b border-border">
+          <div key={wd} className="text-center text-[10px] sm:text-xs font-medium text-muted-foreground py-1.5 sm:py-2 border-b border-border">
             {wd}
           </div>
         ))}
       </div>
       <div className="grid grid-cols-7">
         {cells.map((day, i) => {
-          if (!day) return <div key={i} className="h-24 border-b border-r border-border bg-background/50" />;
+          if (!day) return <div key={i} className="h-12 sm:h-24 border-b border-r border-border bg-background/50" />;
 
           const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const data = days[dateKey];
@@ -54,18 +54,18 @@ function CalendarGrid({ year, month, days, selectedDate, onSelectDate }: Calenda
               key={i}
               onClick={() => onSelectDate(dateKey)}
               className={cn(
-                "h-24 border-b border-r border-border p-1.5 cursor-pointer transition-colors",
+                "h-12 sm:h-24 border-b border-r border-border p-0.5 sm:p-1.5 cursor-pointer transition-colors",
                 isSelected && "bg-accent/10 border-accent",
                 !isSelected && isDense && "bg-accent/5",
                 !isSelected && !isDense && "hover:bg-muted/30"
               )}
             >
-              <div className={cn("text-sm font-medium mb-1", isSelected && "text-accent")}>{day}</div>
+              <div className={cn("text-[11px] sm:text-sm font-medium mb-0.5 sm:mb-1", isSelected && "text-accent")}>{day}</div>
               {data && (
-                <div className="flex flex-wrap gap-1">
-                  {data.art > 0 && <Badge variant="art" className="text-[10px] px-1 py-0">{data.art}</Badge>}
-                  {data.fursuit > 0 && <Badge variant="fursuit" className="text-[10px] px-1 py-0">{data.fursuit}</Badge>}
-                  {data.video > 0 && <Badge variant="video" className="text-[10px] px-1 py-0">{data.video}</Badge>}
+                <div className="flex flex-wrap gap-0.5 sm:gap-1">
+                  {data.art > 0 && <Badge variant="art" className="text-[8px] sm:text-[10px] px-0.5 sm:px-1 py-0">{data.art}</Badge>}
+                  {data.fursuit > 0 && <Badge variant="fursuit" className="text-[8px] sm:text-[10px] px-0.5 sm:px-1 py-0">{data.fursuit}</Badge>}
+                  {data.video > 0 && <Badge variant="video" className="text-[8px] sm:text-[10px] px-0.5 sm:px-1 py-0">{data.video}</Badge>}
                 </div>
               )}
             </div>

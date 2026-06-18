@@ -90,16 +90,16 @@ function CreatePost() {
         </Badge>
       </div>
 
-      <div className="flex items-center gap-2 mb-8">
+      <div className="flex items-center gap-1 sm:gap-2 mb-6 sm:mb-8 overflow-x-auto">
         {[1, 2, 3].map((s) => (
-          <div key={s} className="flex items-center gap-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+          <div key={s} className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+            <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium transition-colors ${
               step >= s ? "bg-accent text-white" : "bg-muted text-muted-foreground"
             }`}>{s}</div>
-            <span className={`text-sm ${step >= s ? "text-foreground" : "text-muted-foreground"}`}>
+            <span className={`text-xs sm:text-sm hidden sm:inline ${step >= s ? "text-foreground" : "text-muted-foreground"}`}>
               {s === 1 ? "Источники" : s === 2 ? "Планирование" : "Предпросмотр"}
             </span>
-            {s < 3 && <div className={`w-12 h-px ${step > s ? "bg-accent" : "bg-border"}`} />}
+            {s < 3 && <div className={`w-6 sm:w-12 h-px ${step > s ? "bg-accent" : "bg-border"}`} />}
           </div>
         ))}
       </div>

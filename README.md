@@ -36,6 +36,19 @@ npm start
 - **Frontend:** http://localhost:5173
 - **Backend API:** http://localhost:8000/docs
 
+### Доступ с телефона (по LAN)
+
+Сервера слушают на `0.0.0.0`, поэтому интерфейс доступен с других устройств в сети:
+
+1. Узнай IP компьютера: `ipconfig` → IPv4 (например `192.168.1.50`)
+2. На телефоне открой `http://192.168.1.50:5173`
+3. Если не открывается — добавь правила фаервола (от администратора):
+
+```powershell
+netsh advfirewall firewall add rule name="VK Scheduler Frontend 5173" dir=in action=allow protocol=tcp localport=5173
+netsh advfirewall firewall add rule name="VK Scheduler Backend 8000" dir=in action=allow protocol=tcp localport=8000
+```
+
 ### Альтернативный запуск (без npm)
 
 ```bash
@@ -81,6 +94,7 @@ chmod +x start.sh && ./start.sh
 - **Health check** с проверкой Supabase (`GET /api/health`)
 - **Persistence** задач — восстанавливаются при рестарте сервера
 - **Graceful shutdown** — SIGTERM/SIGINT сохраняет данные
+- **Адаптивный UI** — мобильная навигация (нижние табы), drawer для деталей дня, карточки вместо таблиц
 
 ## Структура проекта
 
