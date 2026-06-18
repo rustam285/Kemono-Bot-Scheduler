@@ -12,6 +12,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 cookies.txt
-.gitignore
 graphify-out/
 .graphifyignore

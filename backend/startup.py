@@ -21,5 +21,5 @@ def setup_ffmpeg():
 if __name__ == "__main__":
     upgrade_extractors()
     setup_ffmpeg()
-    print(">>> Starting FastAPI server on http://127.0.0.1:8000 ...")
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
+    print(">>> Starting FastAPI server on http://0.0.0.0:8000 ...")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
