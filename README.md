@@ -24,7 +24,7 @@ cd VK-Kemono-Bot-Scheduler
 
 # Создать .env из примера и заполнить
 cp .env.example .env
-# Открыть .env и вписать SUPABASE_URL, SUPABASE_SERVICE_KEY, VK_TOKEN, VK_GROUP_ID, VK_OWNER_ID
+# Открыть .env и вписать SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY, VK_TOKEN, VK_GROUP_ID, VK_OWNER_ID
 
 # Установить зависимости
 npm run setup
@@ -54,6 +54,7 @@ chmod +x start.sh && ./start.sh
 |------------|----------|
 | `SUPABASE_URL` | URL проекта Supabase |
 | `SUPABASE_SERVICE_KEY` | service_role ключ Supabase |
+| `ENCRYPTION_KEY` | Ключ шифрования VK токена (AES-256). Генерация: `python -c "from services.crypto import generate_key; print(generate_key())"` |
 | `VK_TOKEN` | Токен VK (bootstrap, для первого запуска) |
 | `VK_GROUP_ID` | ID группы VK |
 | `VK_OWNER_ID` | ID аккаунта модератора |
@@ -76,6 +77,10 @@ chmod +x start.sh && ./start.sh
 - **Дедупликация** URL (предупреждение о дублях)
 - **Retry** при ошибках загрузки (автоматическая повторная попытка)
 - **Мониторинг** состояния парсеров (yt-dlp/gallery-dl degradation)
+- **Шифрование** VK токена (AES-256, хранится как `enc:...` в settings.json)
+- **Health check** с проверкой Supabase (`GET /api/health`)
+- **Persistence** задач — восстанавливаются при рестарте сервера
+- **Graceful shutdown** — SIGTERM/SIGINT сохраняет данные
 
 ## Структура проекта
 
