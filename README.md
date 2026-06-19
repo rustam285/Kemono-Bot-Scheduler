@@ -28,6 +28,7 @@ cp .env.example .env
 # Открыть .env и вписать SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY, VK_TOKEN, VK_GROUP_ID, VK_OWNER_ID
 
 # Установить зависимости
+npm install
 npm run setup
 
 # Запустить
