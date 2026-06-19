@@ -22,6 +22,7 @@ interface Step2Props {
   timeSlots: string[];
   timezone: string;
   sessionKey: string | null;
+  platform: "vk" | "tg" | "both";
   onStartDateChange: (d: string) => void;
   onTimeSlotsChange: (slots: string[]) => void;
   onTimezoneChange: (tz: string) => void;
@@ -40,7 +41,7 @@ const TIMEZONES = [
 
 function Step2Schedule({
   sources, localFiles, postType, startDate, timeSlots, timezone,
-  sessionKey, onStartDateChange, onTimeSlotsChange, onTimezoneChange,
+  sessionKey, platform, onStartDateChange, onTimeSlotsChange, onTimezoneChange,
   onSessionKeyChange, onPreviewResult, onBack, onNext,
 }: Step2Props) {
   const { data: settings } = useSettings();
@@ -115,6 +116,7 @@ function Step2Schedule({
         time_slots: timeSlots,
         timezone,
         session_key: sessionKey,
+        platform,
       });
 
       onSessionKeyChange(result.session_key);

@@ -12,6 +12,7 @@ interface PostCardProps {
     media_items: MediaItem[];
     post_text: string;
     source_urls: string[];
+    platform: string;
   };
   index: number;
   total: number;
@@ -36,6 +37,9 @@ function PostCard({ post, index, total, onUpdate, onRemove, onMoveUp, onMoveDown
         <div className="flex items-center gap-3">
           <Badge variant={TYPE_VARIANT[post.post_type] || "default"}>
             {post.post_type}
+          </Badge>
+          <Badge variant="outline" className="text-[10px]">
+            {post.platform === "both" ? "VK + TG" : post.platform === "tg" ? "Telegram" : "VK"}
           </Badge>
           {dt && (
             <span className="text-sm text-muted-foreground">

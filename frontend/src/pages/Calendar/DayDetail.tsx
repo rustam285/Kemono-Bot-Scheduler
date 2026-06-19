@@ -1,4 +1,4 @@
-import { useScheduledPosts, useDeletePost, useUpdatePost } from "@/api/client";
+import { useScheduledPosts, useDeletePost, useUpdatePost, api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,9 +30,23 @@ function DayDetail({ date, onClose }: DayDetailProps) {
     return p.scheduled_at.startsWith(date);
   }).sort((a: any, b: any) => (a.scheduled_at || "").localeCompare(b.scheduled_at || ""));
 
-  const handleDelete = async (vkPostId: number) => {
+  const handleDelete = async (post: any) => {
     try {
-      await deletePost.mutateAsync(vkPostId);
+      if (post.vk_post_id) {
+        await deletePost.mutateAsync(post.vk_post_id);
+      }
+      if (post.platform === "tg" || post.platform === "both") {
+        try {
+          if (post.tg_channel && post.tg_message_ids) {
+            const ids = typeof post.tg_message_ids === "string" ? JSON.parse(post.tg_message_ids) : post.tg_message_ids;
+            for (const id of ids) {
+              await api.delete(`/telegram/scheduled/${id}`);
+            }
+          }
+        } catch {
+          // TG deletion is best-effort
+        }
+      }
       addToast({ title: "Удалено", description: "Пост удалён", variant: "success" });
     } catch {
       addToast({ title: "Ошибка", description: "Не удалось удалить пост", variant: "destructive" });
@@ -97,6 +111,11 @@ function DayDetail({ date, onClose }: DayDetailProps) {
                         <Badge variant={TYPE_VARIANT[post.post_type] || "default"} className="text-[10px]">
                           {post.post_type}
                         </Badge>
+                        {post.platform && post.platform !== "vk" && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {post.platform === "both" ? "VK + TG" : "TG"}
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex gap-1">
                         {isEditing ? (
@@ -108,7 +127,7 @@ function DayDetail({ date, onClose }: DayDetailProps) {
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400" onClick={() => handleDelete(post.vk_post_id)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400" onClick={() => handleDelete(post)}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
@@ -153,6 +172,9 @@ function DayDetail({ date, onClose }: DayDetailProps) {
                         <ExternalLink className="w-3 h-3" />
                         VK
                       </a>
+                    )}
+                    {!post.vk_post_id && post.platform === "tg" && (
+                      <span className="text-xs text-muted-foreground">Telegram (запланировано)</span>
                     )}
                   </div>
                 );

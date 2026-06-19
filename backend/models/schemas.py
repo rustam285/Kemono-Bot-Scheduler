@@ -19,6 +19,8 @@ class SettingsResponse(BaseModel):
     max_photo_size_mb: int = 50
     max_video_size_mb: int = 500
     cookies_uploaded_at: Optional[str] = None
+    tg_channel_id: Optional[int] = None
+    tg_channel_title: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -32,6 +34,8 @@ class SettingsUpdate(BaseModel):
     ytdlp_timeout_seconds: Optional[int] = Field(None, ge=5, le=300)
     max_photo_size_mb: Optional[int] = Field(None, ge=1, le=50)
     max_video_size_mb: Optional[int] = Field(None, ge=1, le=2048)
+    tg_channel_id: Optional[int] = None
+    tg_channel_title: Optional[str] = None
 
 
 class VerifyVkRequest(BaseModel):

@@ -26,6 +26,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "max_photo_size_mb": 50,
     "max_video_size_mb": 500,
     "cookies_uploaded_at": None,
+    "tg_channel_id": None,
+    "tg_channel_title": None,
 }
 
 _lock = asyncio.Lock()

@@ -131,3 +131,76 @@ export function useUpdatePost() {
     },
   });
 }
+
+export function useTelegramStatus() {
+  return useQuery({
+    queryKey: ["telegram-status"],
+    queryFn: () => api.get("/telegram/status").then((r) => r.data),
+    refetchInterval: 10000,
+  });
+}
+
+export function useTelegramAuthStart() {
+  return useMutation({
+    mutationFn: (data: { phone: string }) =>
+      api.post("/telegram/auth/start", data).then((r) => r.data),
+  });
+}
+
+export function useTelegramAuthResend() {
+  return useMutation({
+    mutationFn: (data: { phone: string; phone_code_hash: string }) =>
+      api.post("/telegram/auth/resend", data).then((r) => r.data),
+  });
+}
+
+export function useTelegramAuthComplete() {
+  return useMutation({
+    mutationFn: (data: { code: string; phone_code_hash: string }) =>
+      api.post("/telegram/auth/complete", data).then((r) => r.data),
+  });
+}
+
+export function useTelegramAuthPassword() {
+  return useMutation({
+    mutationFn: (data: { password: string }) =>
+      api.post("/telegram/auth/password", data).then((r) => r.data),
+  });
+}
+
+export function useTelegramChannels() {
+  return useQuery({
+    queryKey: ["telegram-channels"],
+    queryFn: () => api.get("/telegram/channels").then((r) => r.data),
+  });
+}
+
+export function useTelegramSelectChannel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { channel_id: number; channel_title: string }) =>
+      api.post("/telegram/channels/select", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      qc.invalidateQueries({ queryKey: ["telegram-status"] });
+    },
+  });
+}
+
+export function useTelegramScheduled() {
+  return useQuery({
+    queryKey: ["telegram-scheduled"],
+    queryFn: () => api.get("/telegram/scheduled").then((r) => r.data),
+  });
+}
+
+export function useDeleteTelegramScheduled() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: number) =>
+      api.delete(`/telegram/scheduled/${messageId}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["telegram-scheduled"] });
+    },
+  });
+}

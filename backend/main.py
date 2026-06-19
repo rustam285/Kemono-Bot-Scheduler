@@ -20,6 +20,7 @@ from routers.settings import router as settings_router
 from routers.stats import router as stats_router
 from routers.tasks import router as tasks_router
 from routers.upload import router as upload_router
+from routers.telegram import router as telegram_router
 from schemas import error_response
 from services.task_store import _tasks, TaskStatus, _persist_tasks, start_cleanup_loop
 import structlog
@@ -67,6 +68,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("startup.cleanup_failed", error=str(exc))
 
+    try:
+        from services import telegram_api
+        await telegram_api.init_client()
+    except Exception as exc:
+        logger.warning("startup.telegram_init_failed", error=str(exc))
+
     yield
     _handle_shutdown()
 
@@ -107,6 +114,7 @@ app.include_router(scheduled_router, prefix="/api")
 app.include_router(stats_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
+app.include_router(telegram_router, prefix="/api")
 
 
 @app.get("/api/upload/media/{filename}")

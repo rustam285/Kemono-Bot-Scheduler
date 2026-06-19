@@ -22,12 +22,14 @@ interface Step1Props {
   localPreviews: { file: File; url: string }[];
   onSourcesChange: (sources: SourceItem[]) => void;
   onLocalFilesChange: (files: File[], previews: { file: File; url: string }[]) => void;
+  platform: "vk" | "tg" | "both";
+  onPlatformChange: (p: "vk" | "tg" | "both") => void;
   onNext: () => void;
 }
 
 let _nextGroupId = 1;
 
-function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onLocalFilesChange, onNext }: Step1Props) {
+function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onLocalFilesChange, platform, onPlatformChange, onNext }: Step1Props) {
   const [urlInput, setUrlInput] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const extract = useExtract();
@@ -117,6 +119,8 @@ function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onL
         <h2 className="text-lg font-semibold mb-1">Источники</h2>
         <p className="text-sm text-muted-foreground">Введите ссылки или загрузите файлы</p>
       </div>
+
+      <PlatformSelector platform={platform} onChange={onPlatformChange} />
 
       <div className="space-y-2">
         <Textarea
@@ -210,5 +214,34 @@ function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onL
   );
 }
 
-export { Step1Sources };
+const PLATFORM_OPTIONS: { value: "vk" | "tg" | "both"; label: string }[] = [
+  { value: "vk", label: "VK" },
+  { value: "tg", label: "Telegram" },
+  { value: "both", label: "Оба" },
+];
+
+function PlatformSelector({ platform, onChange }: { platform: "vk" | "tg" | "both"; onChange: (p: "vk" | "tg" | "both") => void }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-sm font-medium">Платформа</p>
+      <div className="flex gap-2">
+        {PLATFORM_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => onChange(opt.value)}
+            className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+              platform === opt.value
+                ? "bg-accent text-white border-accent"
+                : "bg-background text-muted-foreground border-border hover:border-accent/50"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export { Step1Sources, PlatformSelector };
 export type { SourceItem };

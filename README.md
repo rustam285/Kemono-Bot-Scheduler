@@ -1,12 +1,13 @@
-# VK Post Scheduler
+# VK + Telegram Post Scheduler
 
-Веб-приложение для автоматизации создания отложенных постов в VK-группе. Загружает медиа с Twitter/X, Reddit, YouTube, Bilibili и других платформ, группирует в посты и публикует по расписанию.
+Веб-приложение для автоматизации создания отложенных постов в VK-группе и Telegram-канале. Загружает медиа с Twitter/X, Reddit, YouTube, Bilibili и других платформ, группирует в посты и публикует по расписанию.
 
 ## Стек
 
-- **Backend:** Python 3.11+, FastAPI, Supabase, VK API
+- **Backend:** Python 3.11+, FastAPI, Supabase, VK API, Telethon (MTProto)
 - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
 - **Медиа:** yt-dlp, gallery-dl, httpx
+- **Telegram:** Telethon (MTProto) — отложенные посты в нативном разделе "Запланированные"
 
 ## Быстрый старт
 
@@ -36,19 +37,6 @@ npm start
 - **Frontend:** http://localhost:5173
 - **Backend API:** http://localhost:8000/docs
 
-### Доступ с телефона (по LAN)
-
-Сервера слушают на `0.0.0.0`, поэтому интерфейс доступен с других устройств в сети:
-
-1. Узнай IP компьютера: `ipconfig` → IPv4 (например `192.168.1.50`)
-2. На телефоне открой `http://192.168.1.50:5173`
-3. Если не открывается — добавь правила фаервола (от администратора):
-
-```powershell
-netsh advfirewall firewall add rule name="VK Scheduler Frontend 5173" dir=in action=allow protocol=tcp localport=5173
-netsh advfirewall firewall add rule name="VK Scheduler Backend 8000" dir=in action=allow protocol=tcp localport=8000
-```
-
 ### Альтернативный запуск (без npm)
 
 ```bash
@@ -71,6 +59,9 @@ chmod +x start.sh && ./start.sh
 | `VK_TOKEN` | Токен VK (bootstrap, для первого запуска) |
 | `VK_GROUP_ID` | ID группы VK |
 | `VK_OWNER_ID` | ID аккаунта модератора |
+| `TG_API_ID` | API ID приложения Telegram (из my.telegram.org) |
+| `TG_API_HASH` | API Hash приложения Telegram |
+| `TG_PROXY` | SOCKS5/HTTP прокси для MTProto (опционально, для обхода DPI) |
 | `LOG_LEVEL` | Уровень логирования (DEBUG/INFO/WARNING/ERROR) |
 | `MAX_TEMP_SIZE_GB` | Макс. размер временных файлов (ГБ) |
 | `MAX_CONCURRENT_TASKS` | Макс. одновременных задач публикации |
@@ -81,8 +72,10 @@ chmod +x start.sh && ./start.sh
 
 ## Функции
 
+### VK
 - **Извлечение медиа** из URL (YouTube, Twitter/X, Reddit, Bilibili, прямые ссылки)
 - **3-шаговый мастер** создания постов (источники → планирование → предпросмотр)
+- **Выбор платформы** — VK, Telegram или обе одновременно
 - **Объединение** нескольких источников в один пост
 - **Календарь** с цветной кодировкой типов постов (art/fursuit/video)
 - **Автоматическое распределение** по временным слотам
@@ -90,11 +83,22 @@ chmod +x start.sh && ./start.sh
 - **Дедупликация** URL (предупреждение о дублях)
 - **Retry** при ошибках загрузки (автоматическая повторная попытка)
 - **Мониторинг** состояния парсеров (yt-dlp/gallery-dl degradation)
+
+### Telegram (MTProto)
+- **Отложенные посты** через Telethon — появляются в нативном разделе "Запланированные" Telegram
+- **Авторизация** через UI настроек (номер телефона → код → 2FA)
+- **Поддержка альбомов** (2-10 фото в одном посте)
+- **FloodWait обработка** — автоматическое ожидание при лимитах Telegram
+- **Кэширование** запланированных постов (TTL 30 сек)
+- **Прокси** для обхода DPI-блокировки MTProto
+
+### Общее
 - **Шифрование** VK токена (AES-256, хранится как `enc:...` в settings.json)
 - **Health check** с проверкой Supabase (`GET /api/health`)
 - **Persistence** задач — восстанавливаются при рестарте сервера
 - **Graceful shutdown** — SIGTERM/SIGINT сохраняет данные
 - **Адаптивный UI** — мобильная навигация (нижние табы), drawer для деталей дня, карточки вместо таблиц
+- **Последовательный запуск** — backend стартует первым, frontend ждёт его готовности
 
 ## Структура проекта
 
@@ -104,17 +108,47 @@ chmod +x start.sh && ./start.sh
 │   ├── startup.py           # Автообновление yt-dlp + запуск uvicorn
 │   ├── config.py            # Конфигурация
 │   ├── routers/             # API endpoints
-│   ├── services/            # Бизнес-логика
-│   └── models/              # Pydantic модели
+│   │   ├── telegram.py      # Telegram auth + scheduled posts
+│   │   └── ...
+│   ├── services/
+│   │   ├── telegram_api.py  # Telethon MTProto клиент
+│   │   ├── publisher.py     # Публикация (VK + TG)
+│   │   └── ...
+│   ├── models/              # Pydantic модели
+│   └── database/
+│       ├── create_tables.sql
+│       └── add_tg_columns.sql
 ├── frontend/
 │   └── src/
-│       ├── pages/           # Страницы (CreatePost, Calendar, NoMedia, Settings)
+│       ├── pages/
+│       │   ├── CreatePost/  # 3-шаговый мастер
+│       │   ├── Calendar/    # Календарь постов
+│       │   ├── Settings/    # Настройки (включая Telegram)
+│       │   └── NoMedia/     # Посты без медиа
 │       ├── components/      # UI компоненты (shadcn/ui)
 │       └── api/             # API клиент (TanStack Query)
 ├── .env.example
 ├── package.json
+├── wait-for-backend.js      # Ожидание готовности backend
 └── start.bat / start.sh
 ```
+
+## Telegram — Настройка
+
+1. Получите `api_id` и `api_hash` на [my.telegram.org](https://my.telegram.org) → API development tools
+2. Добавьте в `.env`:
+   ```
+   TG_API_ID=ваш_id
+   TG_API_HASH=ваш_hash
+   ```
+3. Если MTProto блокируется провайдером — настройте прокси:
+   ```
+   TG_PROXY=socks5://127.0.0.1:10801
+   ```
+4. Выполните SQL-миграцию в Supabase (файл `backend/database/add_tg_columns.sql`)
+5. Откройте `/settings` → секция "Telegram (MTProto)" → авторизуйтесь
+6. Выберите канал для публикации
+7. При создании поста выберите платформу: VK, Telegram или Оба
 
 ## Лицензия
 

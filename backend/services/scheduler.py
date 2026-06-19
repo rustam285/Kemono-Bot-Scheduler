@@ -73,13 +73,37 @@ async def fetch_occupied_slots_from_vk(group_id: int) -> set[datetime]:
             break
         offset += count
 
-    logger.info("scheduler.fetched_occupied", count=len(occupied))
+    logger.info("scheduler.fetched_occupied_vk", count=len(occupied))
+    return occupied
+
+
+async def fetch_occupied_slots_from_tg(channel: int | str) -> set[datetime]:
+    occupied: set[datetime] = set()
+    try:
+        from services import telegram_api
+        scheduled = await telegram_api.get_scheduled(channel)
+        for msg in scheduled:
+            date_str = msg.get("date")
+            if date_str:
+                try:
+                    dt = datetime.fromisoformat(date_str)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=pytz.UTC)
+                    occupied.add(dt)
+                except Exception:
+                    pass
+    except Exception as exc:
+        logger.warning("scheduler.tg_get_scheduled_failed", error=str(exc))
+
+    logger.info("scheduler.fetched_occupied_tg", count=len(occupied))
     return occupied
 
 
 async def get_occupied_slots(
     session_key: Optional[str],
     group_id: int,
+    platform: str = "vk",
+    tg_channel: Optional[int | str] = None,
 ) -> tuple[str, set[datetime]]:
     if session_key:
         cached = _get_cached_slots(session_key)
@@ -88,7 +112,16 @@ async def get_occupied_slots(
             return session_key, cached
 
     new_key = session_key or _make_session_key()
-    occupied = await fetch_occupied_slots_from_vk(group_id)
+    occupied: set[datetime] = set()
+
+    if platform in ("vk", "both") and group_id:
+        vk_slots = await fetch_occupied_slots_from_vk(group_id)
+        occupied |= vk_slots
+
+    if platform in ("tg", "both") and tg_channel:
+        tg_slots = await fetch_occupied_slots_from_tg(tg_channel)
+        occupied |= tg_slots
+
     _set_cached_slots(new_key, occupied)
     return new_key, occupied
 
@@ -140,13 +173,20 @@ async def generate_preview(
     time_slots: list[str],
     timezone_name: str,
     session_key: Optional[str],
+    platform: str = "vk",
 ) -> tuple[str, list[dict[str, Any]]]:
     settings = await get_settings()
     group_id = settings.get("vk_group_id")
-    if not group_id:
-        raise ValueError("VK Group ID is not configured")
+    tg_channel = settings.get("tg_channel_id")
 
-    session_key, occupied = await get_occupied_slots(session_key, group_id)
+    if platform in ("vk", "both") and not group_id:
+        raise ValueError("VK Group ID is not configured")
+    if platform in ("tg", "both") and not tg_channel:
+        raise ValueError("Telegram channel is not configured")
+
+    session_key, occupied = await get_occupied_slots(
+        session_key, group_id, platform=platform, tg_channel=tg_channel,
+    )
     schedule = assign_slots(len(post_groups), start_date, time_slots, timezone_name, occupied)
 
     posts = []
@@ -164,6 +204,7 @@ async def generate_preview(
             "media_item_ids": media_item_ids,
             "post_text": post_text,
             "source_urls": source_urls,
+            "platform": platform,
         }
         posts.append(post)
 

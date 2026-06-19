@@ -12,6 +12,7 @@ interface PreviewPost {
   media_items: { id: string; type: string; thumbnail_url?: string; original_url?: string; selected?: boolean }[];
   post_text: string;
   source_urls: string[];
+  platform: string;
 }
 
 interface Step3Props {

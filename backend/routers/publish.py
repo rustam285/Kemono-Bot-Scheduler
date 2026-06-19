@@ -25,6 +25,7 @@ class PreviewRequest(BaseModel):
     time_slots: list[str]
     timezone: str
     session_key: Optional[str] = None
+    platform: str = Field("vk", pattern="^(vk|tg|both)$")
 
 
 class PreviewPostResponse(BaseModel):
@@ -34,6 +35,7 @@ class PreviewPostResponse(BaseModel):
     media_item_ids: list[str] = []
     post_text: str = ""
     source_urls: list[str] = []
+    platform: str = "vk"
 
 
 class PreviewResponse(BaseModel):
@@ -56,6 +58,7 @@ async def preview_endpoint(body: PreviewRequest):
             time_slots=body.time_slots,
             timezone_name=body.timezone,
             session_key=body.session_key,
+            platform=body.platform,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -68,6 +71,7 @@ async def preview_endpoint(body: PreviewRequest):
             media_item_ids=p["media_item_ids"],
             post_text=p["post_text"],
             source_urls=p["source_urls"],
+            platform=p.get("platform", "vk"),
         )
         for p in posts
     ]
@@ -82,6 +86,7 @@ class PublishPostItem(BaseModel):
     media_items: list[dict] = []
     post_text: str = ""
     source_urls: list[str] = []
+    platform: str = Field("vk", pattern="^(vk|tg|both)$")
 
 
 class PublishRequest(BaseModel):

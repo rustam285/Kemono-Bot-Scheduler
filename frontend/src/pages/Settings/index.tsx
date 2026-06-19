@@ -5,10 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Check, X, Upload, Trash2, Shield } from "lucide-react";
+import { TelegramSettings } from "./TelegramSettings";
 
 const TIMEZONES = [
   "Europe/Moscow", "Europe/Kiev", "Europe/Minsk", "Asia/Almaty",
@@ -297,6 +297,8 @@ function Settings() {
           <Button onClick={handleSave} disabled={updateSettings.isPending}>Сохранить</Button>
         </CardContent>
       </Card>
+
+      <TelegramSettings />
     </div>
   );
 }

@@ -13,6 +13,7 @@ interface PreviewPost {
   media_items: MediaItem[];
   post_text: string;
   source_urls: string[];
+  platform: string;
 }
 
 const TYPE_LABELS: Record<string, string> = { art: "Art", fursuit: "Fursuit", video: "Video" };
@@ -32,6 +33,7 @@ function CreatePost() {
   const [timezone, setTimezone] = useState("");
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [previewPosts, setPreviewPosts] = useState<PreviewPost[]>([]);
+  const [platform, setPlatform] = useState<"vk" | "tg" | "both">("vk");
 
   const allMediaMap = useCallback(() => {
     const map = new Map<string, MediaItem>();
@@ -61,6 +63,7 @@ function CreatePost() {
       scheduled_at: p.scheduled_at,
       post_text: p.post_text,
       source_urls: p.source_urls,
+      platform: p.platform || "vk",
       media_items: (p.media_item_ids || []).map((id: string) => mediaMap.get(id)).filter(Boolean) as MediaItem[],
     }));
     setPreviewPosts(mapped);
@@ -77,6 +80,7 @@ function CreatePost() {
     setLocalPreviews([]);
     setPreviewPosts([]);
     setSessionKey(null);
+    setPlatform("vk");
     setStep(1);
     navigate("/posts/calendar");
   }, [navigate]);
@@ -111,6 +115,8 @@ function CreatePost() {
           localPreviews={localPreviews}
           onSourcesChange={setSources}
           onLocalFilesChange={handleLocalFilesChange}
+          platform={platform}
+          onPlatformChange={setPlatform}
           onNext={() => setStep(2)}
         />
       )}
@@ -124,6 +130,7 @@ function CreatePost() {
           timeSlots={timeSlots}
           timezone={timezone}
           sessionKey={sessionKey}
+          platform={platform}
           onStartDateChange={setStartDate}
           onTimeSlotsChange={setTimeSlots}
           onTimezoneChange={setTimezone}

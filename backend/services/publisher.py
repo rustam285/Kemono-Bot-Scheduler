@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -34,13 +36,10 @@ async def publish_processor(task: Task) -> None:
     delay = settings.get("vk_publish_delay_seconds", 5)
     max_photo_mb = settings.get("max_photo_size_mb", 50)
     max_video_mb = settings.get("max_video_size_mb", 500)
-
-    if not group_id or not owner_id:
-        raise ValueError("VK Group ID and Owner ID must be configured")
+    tg_channel = settings.get("tg_channel_id")
 
     posts = task.posts_data
     total = len(posts)
-    retry_queue: list[dict[str, Any]] = []
     max_retries = 2
 
     async with task._lock:
@@ -62,7 +61,18 @@ async def publish_processor(task: Task) -> None:
         post_text = post_data.get("post_text", "")
         scheduled_at = post_data.get("scheduled_at")
         post_type = post_data.get("post_type", "art")
+        platform = post_data.get("platform", "vk")
         retry_count = post_data.get("_retry", 0)
+
+        do_vk = platform in ("vk", "both")
+        do_tg = platform in ("tg", "both")
+
+        if do_vk and (not group_id or not owner_id):
+            logger.error("publish.vk_not_configured", post_id=post_id)
+            do_vk = False
+        if do_tg and not tg_channel:
+            logger.error("publish.tg_not_configured", post_id=post_id)
+            do_tg = False
 
         is_local_only = all(mi.get("source_tool") == "local" for mi in media_items) if media_items else False
 
@@ -70,20 +80,20 @@ async def publish_processor(task: Task) -> None:
             task.progress.current = processed
             task.progress.stage = TaskStage.DOWNLOADING_MEDIA
 
-        short_url = ""
-        if source_urls and not is_local_only:
+        vk_text = post_text
+        if do_vk and source_urls and not is_local_only:
             short_url = await get_short_link(source_urls[0])
-
-        if short_url and source_urls:
-            post_text = post_text.replace(source_urls[0], short_url)
+            if short_url:
+                vk_text = post_text.replace(source_urls[0], short_url)
 
         if is_local_only:
-            import re
-            post_text = re.sub(r"Source:\s*local:[^\n]*", "", post_text).strip()
-            post_text = re.sub(r"\n{3,}", "\n\n", post_text)
+            vk_text = re.sub(r"Source:\s*local:[^\n]*", "", vk_text).strip()
+            vk_text = re.sub(r"\n{3,}", "\n\n", vk_text)
 
-        attachments = []
+        downloaded_files: list[Path] = []
+        vk_attachments: list[str] = []
         download_failed = False
+
         for mi in media_items:
             if task._cancel_event.is_set():
                 return
@@ -98,27 +108,30 @@ async def publish_processor(task: Task) -> None:
 
             if filepath:
                 logger.info("publish.media_downloaded", path=str(filepath), size=filepath.stat().st_size)
-                try:
-                    attachment = await upload_to_vk(filepath, mi_type, group_id)
-                    if attachment:
-                        attachments.append(attachment)
-                        logger.info("publish.media_uploaded", attachment=attachment)
-                    else:
-                        logger.warning("publish.upload_returned_none", url=mi_url[:100])
-                        download_failed = True
-                except Exception as exc:
-                    logger.error("publish.upload_failed", post_id=post_id, error=str(exc))
-                    download_failed = True
-                finally:
+                downloaded_files.append(filepath)
+
+                if do_vk:
                     try:
-                        filepath.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                        attachment = await upload_to_vk(filepath, mi_type, group_id)
+                        if attachment:
+                            vk_attachments.append(attachment)
+                            logger.info("publish.media_uploaded_vk", attachment=attachment)
+                        else:
+                            logger.warning("publish.upload_returned_none", url=mi_url[:100])
+                            download_failed = True
+                    except Exception as exc:
+                        logger.error("publish.upload_failed_vk", post_id=post_id, error=str(exc))
+                        download_failed = True
             else:
                 logger.warning("publish.download_failed", url=mi_url[:100])
                 download_failed = True
 
         if download_failed and retry_count < max_retries:
+            for f in downloaded_files:
+                try:
+                    f.unlink(missing_ok=True)
+                except Exception:
+                    pass
             post_data["_retry"] = retry_count + 1
             posts.append(post_data)
             total += 1
@@ -133,42 +146,115 @@ async def publish_processor(task: Task) -> None:
             task.progress.stage = TaskStage.CREATING_POSTS
 
         if task._cancel_event.is_set():
+            for f in downloaded_files:
+                try:
+                    f.unlink(missing_ok=True)
+                except Exception:
+                    pass
             return
 
-        try:
-            publish_date = None
-            if scheduled_at:
-                dt = datetime.fromisoformat(scheduled_at)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                publish_date = int(dt.timestamp())
+        vk_post_id = None
+        tg_message_ids = None
+        publish_error = None
 
-            wall_params: dict[str, Any] = {
-                "owner_id": f"-{group_id}",
-                "from_group": 1,
-                "message": post_text,
+        if do_vk:
+            try:
+                publish_date = None
+                if scheduled_at:
+                    dt = datetime.fromisoformat(scheduled_at)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    publish_date = int(dt.timestamp())
+
+                wall_params: dict[str, Any] = {
+                    "owner_id": f"-{group_id}",
+                    "from_group": 1,
+                    "message": vk_text,
+                }
+                if vk_attachments:
+                    wall_params["attachments"] = ",".join(vk_attachments)
+
+                for slot_attempt in range(VK_MAX_SLOT_ATTEMPTS):
+                    if publish_date:
+                        wall_params["publish_date"] = publish_date
+
+                    try:
+                        result = await call_method("wall.post", wall_params)
+                        vk_post_id = result.get("post_id") if isinstance(result, dict) else None
+                        break
+                    except VkApiError as slot_exc:
+                        if slot_exc.code == 214 and publish_date:
+                            publish_date += VK_SLOT_DELAY_SECONDS
+                            new_dt = datetime.fromtimestamp(publish_date, tz=timezone.utc)
+                            logger.info("publish.slot_occupied", new_time=new_dt.isoformat(), attempt=slot_attempt + 1)
+                            scheduled_at = new_dt.isoformat()
+                            continue
+                        raise
+
+                logger.info("publish.vk_post_created", post_id=post_id, vk_post_id=vk_post_id)
+
+            except VkApiError as exc:
+                publish_error = f"VK API error: {exc.message}"
+                logger.error("publish.vk_api_error", post_id=post_id, error=str(exc))
+            except Exception as exc:
+                publish_error = str(exc)
+                logger.error("publish.vk_unexpected_error", post_id=post_id, error=str(exc))
+
+        if do_tg:
+            try:
+                from services import telegram_api
+
+                tg_text = post_text
+                if is_local_only:
+                    tg_text = re.sub(r"Source:\s*local:[^\n]*", "", tg_text).strip()
+                    tg_text = re.sub(r"\n{3,}", "\n\n", tg_text)
+
+                schedule_dt = None
+                if scheduled_at:
+                    schedule_dt = datetime.fromisoformat(scheduled_at)
+                    if schedule_dt.tzinfo is None:
+                        schedule_dt = schedule_dt.replace(tzinfo=timezone.utc)
+
+                tg_ids = await telegram_api.send_scheduled(
+                    channel=tg_channel,
+                    text=tg_text,
+                    media_files=downloaded_files,
+                    schedule_dt=schedule_dt,
+                )
+                tg_message_ids = tg_ids
+                logger.info("publish.tg_post_created", post_id=post_id, tg_ids=tg_ids)
+
+            except Exception as exc:
+                publish_error = f"TG error: {exc}" if not publish_error else publish_error + f"; TG error: {exc}"
+                logger.error("publish.tg_error", post_id=post_id, error=str(exc))
+
+        for f in downloaded_files:
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        if publish_error:
+            async with task._lock:
+                task.results[processed % len(task.results)].status = "error"
+                task.results[processed % len(task.results)].error = publish_error
+
+            error_post = {
+                "vk_post_id": vk_post_id,
+                "post_type": post_type,
+                "scheduled_at": scheduled_at,
+                "source_urls": source_urls,
+                "post_text": post_text,
+                "has_media": len(downloaded_files) > 0,
+                "status": "error",
+                "error_message": publish_error,
+                "platform": platform,
             }
-            if attachments:
-                wall_params["attachments"] = ",".join(attachments)
-
-            vk_post_id = None
-            for slot_attempt in range(VK_MAX_SLOT_ATTEMPTS):
-                if publish_date:
-                    wall_params["publish_date"] = publish_date
-
-                try:
-                    result = await call_method("wall.post", wall_params)
-                    vk_post_id = result.get("post_id") if isinstance(result, dict) else None
-                    break
-                except VkApiError as slot_exc:
-                    if slot_exc.code == 214 and publish_date:
-                        publish_date += VK_SLOT_DELAY_SECONDS
-                        new_dt = datetime.fromtimestamp(publish_date, tz=timezone.utc)
-                        logger.info("publish.slot_occupied", new_time=new_dt.isoformat(), attempt=slot_attempt + 1)
-                        scheduled_at = new_dt.isoformat()
-                        continue
-                    raise
-
+            if tg_message_ids:
+                error_post["tg_message_ids"] = json.dumps(tg_message_ids)
+                error_post["tg_channel"] = str(tg_channel)
+            await insert_scheduled_post(error_post)
+        else:
             async with task._lock:
                 task.results[processed % len(task.results)].vk_post_id = vk_post_id
                 task.results[processed % len(task.results)].status = "ok"
@@ -180,42 +266,23 @@ async def publish_processor(task: Task) -> None:
                 "source_urls": source_urls,
                 "media_attachments": [
                     {"type": mi.get("type"), "attachment": att}
-                    for mi, att in zip(media_items[:len(attachments)], attachments)
+                    for mi, att in zip(media_items[:len(vk_attachments)], vk_attachments)
                 ],
                 "post_text": post_text,
-                "has_media": len(attachments) > 0,
+                "has_media": len(downloaded_files) > 0,
                 "status": "scheduled",
+                "platform": platform,
             }
+            if tg_message_ids:
+                db_post["tg_message_ids"] = json.dumps(tg_message_ids)
+                db_post["tg_channel"] = str(tg_channel)
             await insert_scheduled_post(db_post)
 
             for url in source_urls:
                 await record_used_url(url, vk_post_id)
 
             logger.info("publish.post_created",
-                        post_id=post_id, vk_post_id=vk_post_id, post_type=post_type)
-
-        except VkApiError as exc:
-            async with task._lock:
-                task.results[processed % len(task.results)].status = "error"
-                task.results[processed % len(task.results)].error = f"VK API error: {exc.message}"
-            logger.error("publish.vk_api_error", post_id=post_id, error=str(exc))
-
-            error_post = {
-                "post_type": post_type,
-                "scheduled_at": scheduled_at,
-                "source_urls": source_urls,
-                "post_text": post_text,
-                "has_media": len(attachments) > 0,
-                "status": "error",
-                "error_message": str(exc),
-            }
-            await insert_scheduled_post(error_post)
-
-        except Exception as exc:
-            async with task._lock:
-                task.results[processed % len(task.results)].status = "error"
-                task.results[processed % len(task.results)].error = str(exc)
-            logger.error("publish.unexpected_error", post_id=post_id, error=str(exc))
+                        post_id=post_id, vk_post_id=vk_post_id, tg_ids=tg_message_ids, post_type=post_type)
 
         processed += 1
         if processed < total:
