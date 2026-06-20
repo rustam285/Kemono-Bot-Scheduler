@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from config import ENCRYPTION_KEY
+
+if not ENCRYPTION_KEY:
+    raise RuntimeError(
+        "ENCRYPTION_KEY is not set. Generate one with: "
+        "python -c \"from services.crypto import generate_key; print(generate_key())\" "
+        "and add it to .env"
+    )
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -75,7 +84,6 @@ async def lifespan(app: FastAPI):
         logger.warning("startup.telegram_init_failed", error=str(exc))
 
     yield
-    _handle_shutdown()
 
 
 app = FastAPI(title="VK Post Scheduler", lifespan=lifespan)

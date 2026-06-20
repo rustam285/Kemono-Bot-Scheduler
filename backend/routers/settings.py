@@ -61,6 +61,8 @@ async def get_settings_endpoint():
         max_photo_size_mb=s.get("max_photo_size_mb", 50),
         max_video_size_mb=s.get("max_video_size_mb", 500),
         cookies_uploaded_at=s.get("cookies_uploaded_at"),
+        tg_channel_id=s.get("tg_channel_id"),
+        tg_channel_title=s.get("tg_channel_title"),
     )
 
 

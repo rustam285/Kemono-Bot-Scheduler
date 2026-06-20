@@ -4,7 +4,7 @@
 
 ## Стек
 
-- **Backend:** Python 3.11+, FastAPI, Supabase, VK API, Telethon (MTProto)
+- **Backend:** Python 3.13, FastAPI, Supabase, VK API, Telethon (MTProto)
 - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
 - **Медиа:** yt-dlp, gallery-dl, httpx
 - **Telegram:** Telethon (MTProto) — отложенные посты в нативном разделе "Запланированные"
@@ -13,9 +13,10 @@
 
 ### Требования
 
-- Python 3.11+
+- Python 3.13
 - Node.js 18+
 - npm 9+
+- uv (опционально, для быстрого обновления yt-dlp/gallery-dl)
 
 ### Установка
 
@@ -56,7 +57,7 @@ chmod +x start.sh && ./start.sh
 |------------|----------|
 | `SUPABASE_URL` | URL проекта Supabase |
 | `SUPABASE_SERVICE_KEY` | service_role ключ Supabase |
-| `ENCRYPTION_KEY` | Ключ шифрования VK токена (AES-256). Генерация: `python -c "from services.crypto import generate_key; print(generate_key())"` |
+| `ENCRYPTION_KEY` | **Обязательный.** Ключ шифрования VK токена (AES-256). Генерация: `python -c "from services.crypto import generate_key; print(generate_key())"` |
 | `VK_TOKEN` | Токен VK (bootstrap, для первого запуска) |
 | `VK_GROUP_ID` | ID группы VK |
 | `VK_OWNER_ID` | ID аккаунта модератора |
@@ -89,6 +90,7 @@ chmod +x start.sh && ./start.sh
 - **Отложенные посты** через Telethon — появляются в нативном разделе "Запланированные" Telegram
 - **Авторизация** через UI настроек (номер телефона → код → 2FA)
 - **Поддержка альбомов** (2-10 фото в одном посте)
+- **Автоограничение качества** видео для Telegram (≤50 МБ, перекодирование 720p→480p→360p)
 - **FloodWait обработка** — автоматическое ожидание при лимитах Telegram
 - **Кэширование** запланированных постов (TTL 30 сек)
 - **Прокси** для обхода DPI-блокировки MTProto
@@ -106,7 +108,7 @@ chmod +x start.sh && ./start.sh
 ```
 ├── backend/
 │   ├── main.py              # FastAPI app
-│   ├── startup.py           # Автообновление yt-dlp + запуск uvicorn
+│   ├── startup.py           # Запуск uvicorn (обновление yt-dlp в фоне)
 │   ├── config.py            # Конфигурация
 │   ├── routers/             # API endpoints
 │   │   ├── telegram.py      # Telegram auth + scheduled posts

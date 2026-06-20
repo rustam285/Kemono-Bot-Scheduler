@@ -115,7 +115,7 @@ function Settings() {
   if (isLoading) return <div className="text-muted-foreground text-center py-12">Загрузка...</div>;
 
   return (
-    <div className="max-w-3xl space-y-4 sm:space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <h1 className="text-2xl font-bold">Настройки</h1>
 
       <Card>

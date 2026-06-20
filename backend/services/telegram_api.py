@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,13 +31,19 @@ _SCHEDULED_CACHE_TTL = 30
 TG_RETRY_DELAYS = [1, 4, 16]
 TG_MAX_RETRIES = 3
 
-TG_DEVICE_KWARGS = {
-    "device_model": "Desktop",
-    "system_version": "Windows 10",
-    "app_version": "1.0",
-    "lang_code": "ru",
-    "system_lang_code": "ru-RU",
-}
+def _generate_device_kwargs() -> dict[str, str]:
+    models = ["Desktop", "PC", "Laptop", "Workstation"]
+    versions = ["Windows 10", "Windows 11", "Linux", "macOS"]
+    return {
+        "device_model": random.choice(models),
+        "system_version": random.choice(versions),
+        "app_version": f"{random.randint(1, 5)}.{random.randint(0, 9)}.{random.randint(0, 9)}",
+        "lang_code": "ru",
+        "system_lang_code": "ru-RU",
+    }
+
+
+TG_DEVICE_KWARGS = _generate_device_kwargs()
 
 
 class TelegramError(Exception):
@@ -391,7 +398,15 @@ async def _send_single_media_scheduled(
     async with _client_lock:
         client = _ensure_client()
         entity = await client.get_entity(channel)
-        msg = await client.send_file(entity, file, caption=text, schedule=schedule_dt)
+        total_size = file.stat().st_size
+
+        def _progress(current: int, total: int):
+            pct = int(current * 100 / total) if total else 0
+            if pct % 10 == 0:
+                logger.info("telegram.upload_progress", current=current, total=total, pct=pct)
+
+        msg = await client.send_file(entity, file, caption=text, schedule=schedule_dt, progress_callback=_progress)
+        logger.info("telegram.upload_done", file=str(file), size=total_size)
         _invalidate_cache(str(channel))
         return [msg.id]
 
@@ -405,7 +420,14 @@ async def _send_album_scheduled(
     async with _client_lock:
         client = _ensure_client()
         entity = await client.get_entity(channel)
-        messages = await client.send_file(entity, *files, caption=text, schedule=schedule_dt)
+
+        def _progress(current: int, total: int):
+            pct = int(current * 100 / total) if total else 0
+            if pct % 10 == 0:
+                logger.info("telegram.upload_progress", current=current, total=total, pct=pct)
+
+        messages = await client.send_file(entity, files, caption=text, schedule=schedule_dt, progress_callback=_progress)
+        logger.info("telegram.upload_done", count=len(files) if isinstance(files, list) else 1)
         _invalidate_cache(str(channel))
         if isinstance(messages, list):
             return [m.id for m in messages]

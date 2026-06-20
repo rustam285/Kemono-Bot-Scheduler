@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -75,6 +77,7 @@ class MediaItem:
     type: str
     thumbnail_url: Optional[str] = None
     original_url: Optional[str] = None
+    source_url: Optional[str] = None
     selected: bool = True
     source_tool: str = "yt-dlp"
 
@@ -100,17 +103,28 @@ async def _run_process(cmd: list[str], timeout: int) -> tuple[str, str, int]:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             ),
             timeout=5,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace"), proc.returncode
     except asyncio.TimeoutError:
+        _kill_process_tree(proc)
+        raise TimeoutError(f"Process timed out after {timeout}s")
+
+
+def _kill_process_tree(proc) -> None:
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
         try:
             proc.kill()
         except Exception:
             pass
-        raise TimeoutError(f"Process timed out after {timeout}s")
 
 
 def _parse_ytdlp_json(raw: str) -> list[dict[str, Any]]:
@@ -149,6 +163,7 @@ def _media_from_ytdlp(entries: list[dict[str, Any]], url: str) -> list[MediaItem
                 type="video",
                 thumbnail_url=thumbnail,
                 original_url=entry.get("webpage_url") or url,
+                source_url=entry.get("webpage_url") or url,
                 selected=True,
                 source_tool="yt-dlp",
             ))
@@ -160,6 +175,7 @@ def _media_from_ytdlp(entries: list[dict[str, Any]], url: str) -> list[MediaItem
                 type="photo",
                 thumbnail_url=thumbnail,
                 original_url=url_val,
+                source_url=url_val,
                 selected=True,
                 source_tool="yt-dlp",
             ))
@@ -203,6 +219,7 @@ def _media_from_gallerydl(entries: list[Any], url: str) -> list[MediaItem]:
                 type="video" if is_video else "photo",
                 thumbnail_url=file_url,
                 original_url=file_url,
+                source_url=url,
                 selected=True,
                 source_tool="gallery-dl",
             ))
@@ -387,6 +404,13 @@ async def download_media_file(
 
     if url.startswith("http://") or url.startswith("https://"):
         result = await _download_httpx(url, filepath, timeout, max_size_mb)
+        if result and result.exists() and media_item.type == "video":
+            size_mb = result.stat().st_size / (1024 * 1024)
+            if size_mb > 50:
+                logger.info("download.too_large_for_tg", url=url, size_mb=round(size_mb, 1))
+                result.unlink(missing_ok=True)
+                re_url = media_item.source_url or url
+                result = await _download_ytdlp_quality_limited(re_url, filepath, timeout, max_size_mb)
         if result:
             return result
 
@@ -434,6 +458,37 @@ async def _download_ytdlp(url: str, filepath: Path, timeout: int, max_size_mb: i
     except TimeoutError:
         logger.error("download.ytdlp.timeout", url=url)
         return None
+
+
+async def _download_ytdlp_quality_limited(url: str, filepath: Path, timeout: int, max_size_mb: int) -> Optional[Path]:
+    max_bytes = 50 * 1024 * 1024
+    for height in (720, 480, 360):
+        cmd = [
+            sys.executable, "-m", "yt_dlp",
+            "-f", f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best",
+            "--no-playlist",
+            "-o", str(filepath),
+        ] + _cookies_args() + [url]
+
+        logger.info("download.ytdlp.quality_limited", url=url, height=height)
+        try:
+            _, stderr, rc = await _run_process(cmd, timeout * 2)
+            if rc != 0:
+                continue
+
+            actual = _find_downloaded_file(filepath)
+            if actual:
+                size = actual.stat().st_size
+                if size <= max_bytes:
+                    logger.info("download.ytdlp.quality_ok", url=url, height=height, size=size)
+                    return actual
+                logger.info("download.ytdlp.still_too_large", url=url, height=height, size=size)
+                actual.unlink(missing_ok=True)
+        except TimeoutError:
+            logger.error("download.ytdlp.quality_timeout", url=url, height=height)
+
+    logger.warning("download.ytdlp.quality_all_failed", url=url)
+    return None
 
 
 async def _download_gallerydl(url: str, filepath: Path, timeout: int, max_size_mb: int) -> Optional[Path]:

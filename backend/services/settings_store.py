@@ -83,7 +83,9 @@ def save_settings_sync(data: dict[str, Any]) -> None:
     to_save = {**data}
     if "vk_token" in to_save:
         to_save["vk_token"] = _encrypt_token(to_save["vk_token"])
-    SETTINGS_PATH.write_text(json.dumps(to_save, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path = SETTINGS_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(to_save, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(str(tmp_path), str(SETTINGS_PATH))
 
 
 async def get_settings() -> dict[str, Any]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -123,7 +124,9 @@ def _persist_tasks() -> None:
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         data = [t.to_persist() for t in _tasks.values()]
-        TASKS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path = TASKS_PATH.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(tmp_path), str(TASKS_PATH))
     except Exception as exc:
         logger.warning("task_store.persist_failed", error=str(exc))
 
@@ -232,6 +235,7 @@ async def run_task(task: Task, processor: Any) -> None:
 async def start_cleanup_loop() -> None:
     global _cleanup_task
     _load_tasks()
+    _cleanup_old_tasks()
     _cleanup_task = asyncio.create_task(_cleanup_loop())
 
 

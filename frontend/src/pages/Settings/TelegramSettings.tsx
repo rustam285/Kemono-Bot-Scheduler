@@ -1,14 +1,15 @@
 import { useState, useEffect } from "react";
 import {
+  api,
   useTelegramStatus,
   useTelegramAuthStart,
   useTelegramAuthResend,
   useTelegramAuthComplete,
   useTelegramAuthPassword,
-  useTelegramChannels,
   useTelegramSelectChannel,
   useSettings,
 } from "@/api/client";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, Check, Send } from "lucide-react";
+import { Loader2, Check, Send, RefreshCw } from "lucide-react";
 
 function TelegramSettings() {
   const { data: tgStatus, isLoading: statusLoading } = useTelegramStatus();
@@ -25,7 +26,6 @@ function TelegramSettings() {
   const authResend = useTelegramAuthResend();
   const authComplete = useTelegramAuthComplete();
   const authPassword = useTelegramAuthPassword();
-  const { data: channels } = useTelegramChannels();
   const selectChannel = useTelegramSelectChannel();
   const { addToast } = useToast();
 
@@ -37,21 +37,45 @@ function TelegramSettings() {
   const [selectedChannel, setSelectedChannel] = useState<string>("");
   const [nextType, setNextType] = useState<string>("");
   const [resendTimer, setResendTimer] = useState(0);
+  const [showChannelPicker, setShowChannelPicker] = useState(false);
+
+  const { data: channels, isLoading: channelsLoading, refetch: fetchChannels } = useQuery({
+    queryKey: ["telegram-channels"],
+    queryFn: () => api.get("/telegram/channels").then((r) => r.data),
+    enabled: false,
+    staleTime: 5 * 60 * 1000,
+  });
 
   useEffect(() => {
     if (resendTimer <= 0) return;
     const id = setInterval(() => setResendTimer((t) => t - 1), 1000);
     return () => clearInterval(id);
   }, [resendTimer]);
+
   const status = tgStatus?.status || "not_configured";
   const isAuthorized = status === "authorized";
 
-  useEffect(() => {
-    if (settings?.tg_channel_id && channels) {
-      const ch = channels.find((c: any) => c.id === settings.tg_channel_id);
-      if (ch) setSelectedChannel(ch.id.toString());
+  const currentChannelTitle = settings?.tg_channel_title || null;
+  const currentChannelId = settings?.tg_channel_id || null;
+
+  const handleChangeChannel = async () => {
+    setShowChannelPicker(true);
+    await fetchChannels();
+  };
+
+  const handleSelectChannel = async () => {
+    if (!selectedChannel || !channels) return;
+    const ch = channels.find((c: any) => c.id.toString() === selectedChannel);
+    if (!ch) return;
+    try {
+      await selectChannel.mutateAsync({ channel_id: ch.id, channel_title: ch.title });
+      setShowChannelPicker(false);
+      setSelectedChannel("");
+      addToast({ title: "Канал сохранён", description: ch.title, variant: "success" });
+    } catch {
+      addToast({ title: "Ошибка", description: "Не удалось сохранить канал", variant: "destructive" });
     }
-  }, [settings, channels]);
+  };
 
   const handleStartAuth = async () => {
     if (!phone.trim()) return;
@@ -109,18 +133,6 @@ function TelegramSettings() {
       addToast({ title: "Авторизован", description: "Telegram подключён", variant: "success" });
     } catch (err: any) {
       addToast({ title: "Ошибка", description: err?.message || "Неверный пароль", variant: "destructive" });
-    }
-  };
-
-  const handleSelectChannel = async () => {
-    if (!selectedChannel || !channels) return;
-    const ch = channels.find((c: any) => c.id.toString() === selectedChannel);
-    if (!ch) return;
-    try {
-      await selectChannel.mutateAsync({ channel_id: ch.id, channel_title: ch.title });
-      addToast({ title: "Канал сохранён", description: ch.title, variant: "success" });
-    } catch {
-      addToast({ title: "Ошибка", description: "Не удалось сохранить канал", variant: "destructive" });
     }
   };
 
@@ -223,32 +235,57 @@ function TelegramSettings() {
           </div>
         )}
 
-        {isAuthorized && channels && channels.length > 0 && (
-          <div className="space-y-2">
-            <Label>Канал для публикации</Label>
-            <div className="flex gap-2">
-              <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-                <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="Выберите канал" />
-                </SelectTrigger>
-                <SelectContent>
-                  {channels.map((ch: any) => (
-                    <SelectItem key={ch.id} value={ch.id.toString()}>
-                      {ch.title} {ch.username ? `(@${ch.username})` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button onClick={handleSelectChannel} disabled={selectChannel.isPending || !selectedChannel}>
-                {selectChannel.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Сохранить
-              </Button>
+        {isAuthorized && currentChannelId && !showChannelPicker && (
+          <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+            <div className="flex-1">
+              <Label className="text-xs text-muted-foreground">Канал для публикации</Label>
+              <p className="text-sm font-medium">{currentChannelTitle || `ID: ${currentChannelId}`}</p>
             </div>
+            <Button variant="outline" size="sm" onClick={handleChangeChannel}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Сменить
+            </Button>
           </div>
         )}
 
-        {isAuthorized && (!channels || channels.length === 0) && (
-          <p className="text-sm text-muted-foreground">Не найдены каналы, где этот аккаунт — администратор.</p>
+        {isAuthorized && !currentChannelId && !showChannelPicker && (
+          <Button onClick={handleChangeChannel}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Выбрать канал
+          </Button>
+        )}
+
+        {isAuthorized && showChannelPicker && (
+          <div className="space-y-2">
+            <Label>Канал для публикации</Label>
+            {channelsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Загрузка каналов...
+              </div>
+            ) : channels && channels.length > 0 ? (
+              <div className="flex gap-2">
+                <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Выберите канал" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {channels.map((ch: any) => (
+                      <SelectItem key={ch.id} value={ch.id.toString()}>
+                        {ch.title} {ch.username ? `(@${ch.username})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleSelectChannel} disabled={selectChannel.isPending || !selectedChannel}>
+                  {selectChannel.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Сохранить
+                </Button>
+                <Button variant="ghost" onClick={() => { setShowChannelPicker(false); setSelectedChannel(""); }}>Отмена</Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Не найдены каналы, где этот аккаунт — администратор.</p>
+            )}
+          </div>
         )}
 
         {status === "not_configured" && (

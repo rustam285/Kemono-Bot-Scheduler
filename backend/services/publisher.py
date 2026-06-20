@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -84,7 +84,7 @@ async def publish_processor(task: Task) -> None:
         if do_vk and source_urls and not is_local_only:
             short_url = await get_short_link(source_urls[0])
             if short_url:
-                vk_text = post_text.replace(source_urls[0], short_url)
+                vk_text = post_text.replace(source_urls[0], short_url, 1)
 
         if is_local_only:
             vk_text = re.sub(r"Source:\s*local:[^\n]*", "", vk_text).strip()
@@ -164,6 +164,12 @@ async def publish_processor(task: Task) -> None:
                     dt = datetime.fromisoformat(scheduled_at)
                     if dt.tzinfo is None:
                         dt = dt.replace(tzinfo=timezone.utc)
+                    now_ts = int(datetime.now(timezone.utc).timestamp())
+                    if int(dt.timestamp()) <= now_ts:
+                        dt = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+                        dt += timedelta(minutes=1)
+                        scheduled_at = dt.isoformat()
+                        logger.warning("publish.date_in_future_adjusted", post_id=post_id, new_time=scheduled_at)
                     publish_date = int(dt.timestamp())
 
                 wall_params: dict[str, Any] = {
@@ -304,6 +310,7 @@ async def download_media_file_from_dict(
         type=mi.get("type", "photo"),
         thumbnail_url=mi.get("thumbnail_url"),
         original_url=mi.get("original_url"),
+        source_url=mi.get("source_url"),
         selected=mi.get("selected", True),
         source_tool=mi.get("source_tool", "yt-dlp"),
     )

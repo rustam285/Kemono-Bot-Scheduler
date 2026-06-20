@@ -22,6 +22,7 @@ class MediaItemResponse(BaseModel):
     type: str
     thumbnail_url: Optional[str] = None
     original_url: Optional[str] = None
+    source_url: Optional[str] = None
     selected: bool = True
 
 
@@ -59,6 +60,7 @@ async def extract_endpoint(body: ExtractRequest):
                 type=m.type,
                 thumbnail_url=m.thumbnail_url,
                 original_url=m.original_url,
+                source_url=m.source_url,
                 selected=m.selected,
             )
             for m in extract_result.media_items

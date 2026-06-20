@@ -172,6 +172,7 @@ export function useTelegramChannels() {
   return useQuery({
     queryKey: ["telegram-channels"],
     queryFn: () => api.get("/telegram/channels").then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
   });
 }
 
