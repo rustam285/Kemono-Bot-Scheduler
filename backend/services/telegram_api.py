@@ -16,6 +16,7 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 from telethon.tl.types import Channel
+from telethon.tl.functions.messages import GetScheduledHistoryRequest
 
 from config import TG_API_HASH, TG_API_ID, TG_PROXY, TG_SESSION_PATH
 
@@ -353,19 +354,25 @@ async def get_scheduled(channel: str | int) -> list[dict]:
             return []
         try:
             entity = await client.get_entity(_normalize_channel_id(channel))
-            messages = await client.get_messages(entity, scheduled=True)
-            result = []
-            for msg in messages:
+            
+            # 🔥 Прямой MTProto-запрос: возвращает ВСЕ отложенные посты сразу
+            response = await client(GetScheduledHistoryRequest(entity, hash=0))
+            raw_messages = response.messages
+
+            formatted_messages = []
+            for msg in raw_messages:
                 if msg is None:
                     continue
-                result.append({
+                formatted_messages.append({
                     "id": msg.id,
                     "date": msg.date.isoformat() if msg.date else None,
                     "text": msg.text or "",
                     "has_media": msg.media is not None,
                 })
-            _scheduled_cache[cache_key] = (now, result)
-            return result
+            
+            _scheduled_cache[cache_key] = (now, formatted_messages)
+            return formatted_messages
+            
         except FloodWaitError as e:
             logger.warning("telegram.get_scheduled_flood_wait", seconds=e.seconds)
             return []

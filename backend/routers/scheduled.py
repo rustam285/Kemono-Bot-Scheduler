@@ -17,32 +17,35 @@ from services.supabase_client import (
     update_scheduled_post,
     update_scheduled_post_by_id,
 )
+from services.sync_cache import (
+    get_cached_sync,
+    get_sync_cache_ttl,
+    get_sync_lock,
+    invalidate_sync_cache,
+    set_cached_sync,
+)
 from services.vk_api import VkApiError, call_method
-
+from telethon.tl.functions.messages import GetScheduledHistoryRequest
 router = APIRouter(prefix="/scheduled", tags=["scheduled"])
-
-_sync_cache: Optional[tuple[float, list]] = None
-_SYNC_CACHE_TTL = 3600
-_sync_lock = asyncio.Lock()
 
 
 def _invalidate_sync_cache() -> None:
-    global _sync_cache
-    _sync_cache = None
+    invalidate_sync_cache()
 
 
 async def _sync_with_vk() -> list[dict[str, Any]]:
-    global _sync_cache
     now = time.time()
-    if _sync_cache is not None:
-        cached_at, cached_data = _sync_cache
-        if now - cached_at < _SYNC_CACHE_TTL:
+    cached = get_cached_sync()
+    if cached is not None:
+        cached_at, cached_data = cached
+        if now - cached_at < get_sync_cache_ttl():
             return cached_data
 
-    async with _sync_lock:
-        if _sync_cache is not None:
-            cached_at, cached_data = _sync_cache
-            if now - cached_at < _SYNC_CACHE_TTL:
+    async with get_sync_lock():
+        cached = get_cached_sync()
+        if cached is not None:
+            cached_at, cached_data = cached
+            if now - cached_at < get_sync_cache_ttl():
                 return cached_data
 
         import structlog
@@ -170,7 +173,7 @@ async def _sync_with_vk() -> list[dict[str, Any]]:
                         pass
 
     _log.info("sync.done", vk_count=len(vk_posts), inserted=inserted, result_count=len(result))
-    _sync_cache = (time.time(), result)
+    set_cached_sync(result)
     return result
 
 
@@ -256,48 +259,86 @@ async def _update_tg_post(post: dict, body: PostUpdate):
             client = telegram_api._ensure_client()
             entity = await client.get_entity(channel_id)
 
-            all_scheduled = await client.get_messages(entity, scheduled=True)
+            import structlog
+            _log = structlog.get_logger(__name__)
+
+            result = await client(GetScheduledHistoryRequest(entity, hash=0))
+            all_scheduled = result.messages
+            _log.info("tg_edit.all_scheduled_ids",
+                       channel=str(channel_id),
+                       count=len(all_scheduled),
+                       ids=[m.id for m in all_scheduled if m],
+                       requested=tg_message_ids)
             id_set = set(int(mid) for mid in tg_message_ids)
             target_msgs = [m for m in all_scheduled if m and m.id in id_set]
 
-            import structlog
-            _log = structlog.get_logger(__name__)
             _log.info("tg_edit.found_scheduled", requested=tg_message_ids,
                        found=[m.id for m in target_msgs],
                        has_media=[(m.id, m.media is not None) for m in target_msgs])
 
-            for msg in target_msgs:
-                try:
-                    if msg.media:
-                        tmp_dir = Path(tempfile.mkdtemp(prefix="tg_edit_"))
-                        fpath = await client.download_media(msg.media, file=str(tmp_dir))
-                        if fpath:
-                            media_files.append(Path(fpath))
-                            _log.info("tg_edit.media_downloaded", msg_id=msg.id, path=str(fpath))
+            if target_msgs:
+                for msg in target_msgs:
+                    try:
+                        if msg.media:
+                            tmp_dir = Path(tempfile.mkdtemp(prefix="tg_edit_"))
+                            fpath = await client.download_media(msg, file=str(tmp_dir))
+                            if fpath:
+                                media_files.append(Path(fpath))
+                                _log.info("tg_edit.media_downloaded", msg_id=msg.id, path=str(fpath))
+                            else:
+                                _log.warning("tg_edit.download_returned_none", msg_id=msg.id)
                         else:
-                            _log.warning("tg_edit.download_returned_none", msg_id=msg.id)
+                            _log.warning("tg_edit.no_media_on_message", msg_id=msg.id)
+                    except Exception as exc:
+                        _log.error("tg_edit.media_download_failed", msg_id=msg.id, error=str(exc))
+
+                had_media = any(m.media is not None for m in target_msgs)
+                if had_media and not media_files:
+                    raise HTTPException(500, "Failed to download media from scheduled message, edit aborted to preserve original")
+
+                from telethon.tl.functions.messages import DeleteScheduledMessagesRequest
+                await client(DeleteScheduledMessagesRequest(peer=entity, id=tg_message_ids))
+
+                if media_files:
+                    if len(media_files) == 1:
+                        msg = await client.send_file(
+                            entity, media_files[0], caption=new_text, schedule=schedule_dt
+                        )
+                        new_ids = [msg.id]
                     else:
-                        _log.warning("tg_edit.no_media_on_message", msg_id=msg.id)
-                except Exception as exc:
-                    _log.error("tg_edit.media_download_failed", msg_id=msg.id, error=str(exc))
-
-            from telethon.tl.functions.messages import DeleteScheduledMessagesRequest
-            await client(DeleteScheduledMessagesRequest(peer=entity, id=tg_message_ids))
-
-            if media_files:
-                if len(media_files) == 1:
-                    msg = await client.send_file(
-                        entity, media_files[0], caption=new_text, schedule=schedule_dt
-                    )
-                    new_ids = [msg.id]
+                        msgs = await client.send_file(
+                            entity, media_files, caption=new_text, schedule=schedule_dt
+                        )
+                        new_ids = [m.id for m in msgs] if isinstance(msgs, list) else [msgs.id]
                 else:
-                    msgs = await client.send_file(
-                        entity, media_files, caption=new_text, schedule=schedule_dt
-                    )
-                    new_ids = [m.id for m in msgs] if isinstance(msgs, list) else [msgs.id]
+                    msg = await client.send_message(entity, new_text, schedule=schedule_dt)
+                    new_ids = [msg.id]
             else:
-                msg = await client.send_message(entity, new_text, schedule=schedule_dt)
-                new_ids = [msg.id]
+                published_msgs = await client.get_messages(entity, ids=tg_message_ids, limit=50)
+                published_msgs = [m for m in published_msgs if m is not None]
+
+                if not published_msgs:
+                    original_text = post.get("post_text", "")
+                    search_text = original_text[:40] if original_text else ""
+                    if search_text:
+                        _log.info("tg_edit.searching_by_text", channel=channel_id, search=search_text)
+                        async for candidate in client.iter_messages(entity, search=search_text, limit=10):
+                            if candidate and candidate.text and candidate.text.strip() == original_text.strip():
+                                published_msgs = [candidate]
+                                _log.info("tg_edit.found_by_text", msg_id=candidate.id)
+                                break
+
+                _log.info("tg_edit.found_published", requested=tg_message_ids,
+                           found=[m.id for m in published_msgs])
+
+                if not published_msgs:
+                    raise HTTPException(404, "Message not found in scheduled or published messages")
+
+                for msg in published_msgs:
+                    await client.edit_message(entity, msg.id, new_text)
+                    _log.info("tg_edit.edited_published", msg_id=msg.id)
+
+                new_ids = [m.id for m in published_msgs]
 
         for f in media_files:
             try:
@@ -325,6 +366,8 @@ async def _update_tg_post(post: dict, body: PostUpdate):
 
         _invalidate_sync_cache()
         return {"status": "ok", "new_tg_message_ids": new_ids}
+    except HTTPException:
+        raise
     except Exception as exc:
         import structlog
         _log = structlog.get_logger(__name__)

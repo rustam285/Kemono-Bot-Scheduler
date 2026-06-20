@@ -22,7 +22,8 @@ from services.media_downloader import (
 from services.scheduler import generate_preview, invalidate_cache
 from services.settings_store import get_settings
 from services.supabase_client import insert_scheduled_post, record_used_url
-from services.task_store import Task, TaskStage, TaskStatus
+from services.sync_cache import invalidate_sync_cache
+from services.task_store import PostResult, Task, TaskStage, TaskStatus
 from services.url_shortener import get_short_link
 from services.vk_api import VkApiError, call_method
 
@@ -137,6 +138,7 @@ async def publish_processor(task: Task) -> None:
             total += 1
             async with task._lock:
                 task.progress.total = total
+                task.results.append(PostResult(post_id=post_id, status="pending"))
             logger.info("publish.queued_for_retry", post_id=post_id, retry=retry_count + 1)
             processed += 1
             continue
@@ -242,8 +244,10 @@ async def publish_processor(task: Task) -> None:
 
         if publish_error:
             async with task._lock:
-                task.results[processed % len(task.results)].status = "error"
-                task.results[processed % len(task.results)].error = publish_error
+                result_entry = next((r for r in task.results if r.post_id == post_id), None)
+                if result_entry:
+                    result_entry.status = "error"
+                    result_entry.error = publish_error
 
             error_post = {
                 "vk_post_id": vk_post_id,
@@ -265,8 +269,10 @@ async def publish_processor(task: Task) -> None:
             await insert_scheduled_post(error_post)
         else:
             async with task._lock:
-                task.results[processed % len(task.results)].vk_post_id = vk_post_id
-                task.results[processed % len(task.results)].status = "ok"
+                result_entry = next((r for r in task.results if r.post_id == post_id), None)
+                if result_entry:
+                    result_entry.vk_post_id = vk_post_id
+                    result_entry.status = "ok"
 
             vk_attachments_data = [
                 {"type": mi.get("type"), "attachment": att}
@@ -333,6 +339,7 @@ async def publish_processor(task: Task) -> None:
             await asyncio.sleep(delay)
 
     invalidate_cache()
+    invalidate_sync_cache()
     await cleanup_old_temp_dirs()
 
 
