@@ -21,7 +21,7 @@
 ### Установка
 
 ```bash
-git clone https://github.com/rustam285/VK-Kemono-Bot-Scheduler.git
+git clone https://github.com/rustam285/Kemono-Bot-Scheduler.git
 cd Kemono-Bot-Scheduler
 
 # Создать .env из примера и заполнить
