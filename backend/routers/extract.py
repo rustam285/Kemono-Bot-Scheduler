@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from config import EXTRACT_MAX_URLS
 from services.media_downloader import ExtractResult, extract_media
+from services.settings_store import get_settings
 from services.supabase_client import check_urls_used
 
 router = APIRouter(tags=["extract"])
@@ -46,12 +49,26 @@ async def extract_endpoint(body: ExtractRequest):
     import structlog
     logger = structlog.get_logger(__name__)
 
+    if len(body.urls) > EXTRACT_MAX_URLS:
+        raise HTTPException(
+            400,
+            f"Слишком много ссылок за один запрос: {len(body.urls)} (максимум {EXTRACT_MAX_URLS})",
+        )
+
+    settings = await get_settings()
+    concurrency = max(1, min(4, int(settings.get("max_download_workers", 3) or 3)))
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _extract_one(url: str) -> ExtractResult:
+        # Twitter-ссылки дополнительно сериализуются глобальным локом внутри extract_media
+        async with semaphore:
+            return await extract_media(url)
+
     used_map = await check_urls_used(body.urls)
+    extract_results = await asyncio.gather(*(_extract_one(url) for url in body.urls))
 
     results: list[ExtractItemResponse] = []
-    for url in body.urls:
-        logger.info("extract_endpoint.processing", url=url)
-        extract_result: ExtractResult = await extract_media(url)
+    for url, extract_result in zip(body.urls, extract_results):
         logger.info("extract_endpoint.result", url=url, items=len(extract_result.media_items), error=extract_result.error)
 
         media_responses = [

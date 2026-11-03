@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 import signal
 import asyncio
 from datetime import datetime, timezone
@@ -69,6 +70,11 @@ async def lifespan(app: FastAPI):
 
     await start_cleanup_loop()
 
+    # Watchdog стартует первым из init-шагов: если Supabase ушёл в паузу
+    # за время простоя, восстановление начнётся сразу
+    from services.supabase_watchdog import start_watchdog
+    await start_watchdog()
+
     from services.supabase_client import cleanup_stale_posts
     try:
         removed = await cleanup_stale_posts()
@@ -107,9 +113,12 @@ async def general_exception_handler(request: Request, exc: Exception):
     )
 
 
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -128,7 +137,17 @@ app.include_router(telegram_router, prefix="/api")
 @app.get("/api/upload/media/{filename}")
 async def serve_upload(filename: str):
     from routers.upload import UPLOAD_DIR
+
+    # Защита от path traversal: никаких разделителей/«..», файл обязан лежать внутри UPLOAD_DIR
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(404, "File not found")
+
     filepath = UPLOAD_DIR / filename
-    if not filepath.exists():
+    try:
+        inside_upload_dir = filepath.resolve().is_relative_to(UPLOAD_DIR.resolve())
+    except OSError:
+        inside_upload_dir = False
+
+    if not inside_upload_dir or not filepath.is_file():
         raise HTTPException(404, "File not found")
     return FileResponse(filepath)

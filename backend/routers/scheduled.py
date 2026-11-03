@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+import structlog
 
 from services.settings_store import get_settings
 from services.supabase_client import (
@@ -27,6 +28,7 @@ from services.sync_cache import (
 from services.vk_api import VkApiError, call_method
 from telethon.tl.functions.messages import GetScheduledHistoryRequest
 router = APIRouter(prefix="/scheduled", tags=["scheduled"])
+_logger = structlog.get_logger(__name__)
 
 
 def _invalidate_sync_cache() -> None:
@@ -134,7 +136,7 @@ async def _sync_with_vk() -> list[dict[str, Any]]:
             await insert_scheduled_post({
                 "vk_post_id": vk_id,
                 "post_type": post_type,
-                "scheduled_at": datetime.fromtimestamp(post_date).isoformat(),
+                "scheduled_at": datetime.fromtimestamp(post_date, tz=timezone.utc).isoformat(),
                 "source_urls": source_urls,
                 "media_attachments": media_attachments,
                 "post_text": text,
@@ -492,11 +494,19 @@ async def _do_update(post: dict, body: PostUpdate):
                 if att_strings:
                     wall_params["attachments"] = ",".join(att_strings)
 
-                await call_method("wall.delete", {"owner_id": f"-{group_id}", "post_id": vk_post_id})
-                import asyncio
-                await asyncio.sleep(1)
+                # Сначала создаём новый пост, затем удаляем старый:
+                # при сбое между вызовами пост не теряется (хуже дубликат, чем потеря)
                 result = await call_method("wall.post", wall_params)
                 new_vk_id = result.get("post_id") if isinstance(result, dict) else None
+                if not new_vk_id:
+                    raise VkApiError(0, "wall.post did not return post_id")
+                _logger.info("scheduled.edit_reposted", old=vk_post_id, new=new_vk_id)
+                await asyncio.sleep(1)
+                try:
+                    await call_method("wall.delete", {"owner_id": f"-{group_id}", "post_id": vk_post_id})
+                except VkApiError as del_exc:
+                    _logger.warning("scheduled.edit_old_delete_failed", old=vk_post_id, new=new_vk_id,
+                                    error=del_exc.message)
 
                 db_updates: dict[str, Any] = {
                     "vk_post_id": new_vk_id,

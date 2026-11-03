@@ -3,7 +3,24 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 const api = axios.create({ baseURL: "/api", timeout: 120000 });
 
+// Извлечение медиа может идти минутами (yt-dlp/gallery-dl по многим ссылкам),
+// поэтому для /extract отдельный клиент с длинным таймаутом
+const apiSlow = axios.create({ baseURL: "/api", timeout: 600000 });
+
 export { api };
+
+/** Достаёт человекочитаемое сообщение об ошибке из ответа бэкенда */
+export function extractApiError(err: unknown): string {
+  const e = err as { response?: { data?: { error?: unknown; detail?: unknown } }; message?: string };
+  const data = e?.response?.data;
+  if (data?.error) {
+    return Array.isArray(data.error) ? data.error.join("; ") : String(data.error);
+  }
+  if (data?.detail) {
+    return Array.isArray(data.detail) ? data.detail.join("; ") : String(data.detail);
+  }
+  return e?.message || "Неизвестная ошибка";
+}
 
 export function useStats() {
   return useQuery({
@@ -57,7 +74,7 @@ export function useDeleteCookies() {
 
 export function useExtract() {
   return useMutation({
-    mutationFn: (urls: string[]) => api.post("/extract", { urls }).then((r) => r.data),
+    mutationFn: (urls: string[]) => apiSlow.post("/extract", { urls }).then((r) => r.data),
   });
 }
 
@@ -82,6 +99,12 @@ export function useTaskStatus(taskId: string | null) {
       const status = query.state.data?.status;
       return status === "processing" || status === "pending" ? 2000 : false;
     },
+  });
+}
+
+export function useCancelTask() {
+  return useMutation({
+    mutationFn: (taskId: string) => api.delete(`/task/${taskId}`).then((r) => r.data),
   });
 }
 

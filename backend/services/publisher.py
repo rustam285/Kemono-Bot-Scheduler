@@ -13,17 +13,12 @@ from typing import Any, Optional
 import structlog
 
 from config import VK_MAX_SLOT_ATTEMPTS, VK_SLOT_DELAY_SECONDS
-from services.media_downloader import (
-    TEMP_BASE,
-    cleanup_old_temp_dirs,
-    download_media_file,
-    is_twitter_url,
-)
-from services.scheduler import generate_preview, invalidate_cache
+from services.media_downloader import cleanup_old_temp_dirs, download_media_file
+from services.scheduler import invalidate_cache
 from services.settings_store import get_settings
 from services.supabase_client import insert_scheduled_post, record_used_url
 from services.sync_cache import invalidate_sync_cache
-from services.task_store import PostResult, Task, TaskStage, TaskStatus
+from services.task_store import Task, TaskStage
 from services.url_shortener import get_short_link
 from services.vk_api import VkApiError, call_method
 
@@ -40,11 +35,14 @@ async def publish_processor(task: Task) -> None:
     tg_channel = settings.get("tg_channel_id")
 
     posts = task.posts_data
+    # original_total — число постов (не растёт от ретраев); total — длина очереди
+    original_total = len(posts)
     total = len(posts)
+    finished = 0
     max_retries = 2
 
     async with task._lock:
-        task.progress.total = total
+        task.progress.total = original_total
         task.progress.stage = TaskStage.DOWNLOADING_MEDIA
 
     processed = 0
@@ -75,10 +73,42 @@ async def publish_processor(task: Task) -> None:
             logger.error("publish.tg_not_configured", post_id=post_id)
             do_tg = False
 
+        # Ранние ошибки: публиковать нечего — сразу отмечаем пост ошибкой,
+        # не имитируя успешную публикацию
+        early_error = None
+        if not do_vk and not do_tg:
+            early_error = "Нет настроенных платформ: задайте VK group/owner ID или TG-канал в настройках"
+        elif not scheduled_at:
+            early_error = "Пост без даты публикации: не хватило свободных слотов"
+
+        if early_error:
+            async with task._lock:
+                result_entry = next((r for r in task.results if r.post_id == post_id), None)
+                if result_entry:
+                    result_entry.status = "error"
+                    result_entry.error = early_error
+            await insert_scheduled_post({
+                "post_type": post_type,
+                "scheduled_at": scheduled_at,
+                "source_urls": source_urls,
+                "post_text": post_text,
+                "has_media": False,
+                "status": "error",
+                "error_message": early_error,
+                "platform": platform,
+            })
+            finished += 1
+            async with task._lock:
+                task.progress.current = finished
+            processed += 1
+            if processed < total:
+                await asyncio.sleep(delay)
+            continue
+
         is_local_only = all(mi.get("source_tool") == "local" for mi in media_items) if media_items else False
 
         async with task._lock:
-            task.progress.current = processed
+            task.progress.current = finished
             task.progress.stage = TaskStage.DOWNLOADING_MEDIA
 
         vk_text = post_text
@@ -92,59 +122,69 @@ async def publish_processor(task: Task) -> None:
             vk_text = re.sub(r"\n{3,}", "\n\n", vk_text)
 
         downloaded_files: list[Path] = []
-        vk_attachments: list[str] = []
         download_failed = False
+        # Кэш медиа переживает ретраи поста: успешно скачанные файлы и загруженные
+        # в VK вложения переиспользуются, повторно обрабатываются только упавшие
+        media_cache: dict[str, dict[str, Any]] = post_data.setdefault("_media_cache", {})
 
         for mi in media_items:
             if task._cancel_event.is_set():
                 return
 
+            mi_id = str(mi.get("id", ""))
             mi_url = mi.get("original_url", "")
             mi_type = mi.get("type", "photo")
             mi_tool = mi.get("source_tool", "unknown")
-            logger.info("publish.downloading_media", url=mi_url[:100], type=mi_type, tool=mi_tool)
 
-            max_size = max_video_mb if mi_type == "video" else max_photo_mb
-            filepath = await download_media_file_from_dict(mi, task.task_id, max_size)
+            cached = media_cache.get(mi_id) or {}
+            filepath = Path(cached["path"]) if cached.get("path") else None
+            if filepath is not None and not filepath.exists():
+                media_cache.pop(mi_id, None)
+                cached, filepath = {}, None
+            attachment = cached.get("attachment")
 
-            if filepath:
+            if filepath is None:
+                logger.info("publish.downloading_media", url=mi_url[:100], type=mi_type, tool=mi_tool)
+                max_size = max_video_mb if mi_type == "video" else max_photo_mb
+                filepath = await download_media_file_from_dict(mi, task.task_id, max_size)
+                if filepath is None:
+                    logger.warning("publish.download_failed", url=mi_url[:100])
+                    download_failed = True
+                    continue
                 logger.info("publish.media_downloaded", path=str(filepath), size=filepath.stat().st_size)
+
+            if do_vk and attachment is None:
+                try:
+                    attachment = await upload_to_vk(filepath, mi_type, group_id)
+                except Exception as exc:
+                    logger.error("publish.upload_failed_vk", post_id=post_id, error=str(exc))
+                    attachment = None
+                media_cache[mi_id] = {"path": str(filepath), "attachment": attachment}
+                if attachment is None:
+                    logger.warning("publish.upload_vk_failed", url=mi_url[:100])
+                    download_failed = True
+                    continue
+                logger.info("publish.media_uploaded_vk", attachment=attachment)
+
+            media_cache[mi_id] = {"path": str(filepath), "attachment": attachment}
+            if filepath not in downloaded_files:
                 downloaded_files.append(filepath)
 
-                if do_vk:
-                    try:
-                        attachment = await upload_to_vk(filepath, mi_type, group_id)
-                        if attachment:
-                            vk_attachments.append(attachment)
-                            logger.info("publish.media_uploaded_vk", attachment=attachment)
-                        else:
-                            logger.warning("publish.upload_returned_none", url=mi_url[:100])
-                            download_failed = True
-                    except Exception as exc:
-                        logger.error("publish.upload_failed_vk", post_id=post_id, error=str(exc))
-                        download_failed = True
-            else:
-                logger.warning("publish.download_failed", url=mi_url[:100])
-                download_failed = True
-
         if download_failed and retry_count < max_retries:
-            for f in downloaded_files:
-                try:
-                    f.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            # Файлы и вложения не удаляем — ретрай доиспользует их из media_cache.
+            # progress.total не трогаем: ретрай — это тот же пост, а не новый
             post_data["_retry"] = retry_count + 1
             posts.append(post_data)
             total += 1
             async with task._lock:
-                task.progress.total = total
-                task.results.append(PostResult(post_id=post_id, status="pending"))
-            logger.info("publish.queued_for_retry", post_id=post_id, retry=retry_count + 1)
+                task.progress.retries += 1
+            logger.info("publish.queued_for_retry", post_id=post_id, retry=retry_count + 1,
+                        cached_media=len(media_cache))
             processed += 1
             continue
 
         async with task._lock:
-            task.progress.current = processed + 1
+            task.progress.current = finished + 1
             task.progress.stage = TaskStage.CREATING_POSTS
 
         if task._cancel_event.is_set():
@@ -158,6 +198,20 @@ async def publish_processor(task: Task) -> None:
         vk_post_id = None
         tg_message_ids = None
         publish_error = None
+
+        # Вложения собираем в исходном порядке media_items, а не в порядке загрузки
+        vk_attachments = [
+            media_cache[str(mi.get("id", ""))]["attachment"]
+            for mi in media_items
+            if media_cache.get(str(mi.get("id", "")), {}).get("attachment")
+        ]
+        # Пост может выйти с неполным набором медиа (источник упирался) —
+        # помечаем это и в задаче, и в БД, вместо молчаливой публикации без фото
+        media_note = None
+        if do_vk and media_items and len(vk_attachments) < len(media_items):
+            media_note = f"медиа {len(vk_attachments)}/{len(media_items)}"
+            logger.warning("publish.partial_media", post_id=post_id,
+                           uploaded=len(vk_attachments), total=len(media_items))
 
         if do_vk:
             try:
@@ -198,8 +252,15 @@ async def publish_processor(task: Task) -> None:
                             scheduled_at = new_dt.isoformat()
                             continue
                         raise
+                else:
+                    publish_error = (
+                        f"Не удалось занять слот за {VK_MAX_SLOT_ATTEMPTS} попыток "
+                        f"(все соседние слоты заняты)"
+                    )
+                    logger.error("publish.slot_exhausted", post_id=post_id)
 
-                logger.info("publish.vk_post_created", post_id=post_id, vk_post_id=vk_post_id)
+                if vk_post_id is not None:
+                    logger.info("publish.vk_post_created", post_id=post_id, vk_post_id=vk_post_id)
 
             except VkApiError as exc:
                 publish_error = f"VK API error: {exc.message}"
@@ -273,10 +334,12 @@ async def publish_processor(task: Task) -> None:
                 if result_entry:
                     result_entry.vk_post_id = vk_post_id
                     result_entry.status = "ok"
+                    result_entry.error = media_note
 
             vk_attachments_data = [
-                {"type": mi.get("type"), "attachment": att}
-                for mi, att in zip(media_items[:len(vk_attachments)], vk_attachments)
+                {"type": mi.get("type"), "attachment": media_cache[str(mi.get("id", ""))]["attachment"]}
+                for mi in media_items
+                if media_cache.get(str(mi.get("id", "")), {}).get("attachment")
             ]
 
             if platform == "both" and vk_post_id and tg_message_ids:
@@ -291,6 +354,8 @@ async def publish_processor(task: Task) -> None:
                     "status": "scheduled",
                     "platform": "vk",
                 }
+                if media_note:
+                    vk_db["error_message"] = media_note
                 await insert_scheduled_post(vk_db)
 
                 tg_db = {
@@ -326,6 +391,8 @@ async def publish_processor(task: Task) -> None:
                     _title = settings.get("tg_channel_title")
                     if _title:
                         db_post["tg_channel_title"] = _title
+                if media_note:
+                    db_post["error_message"] = media_note
                 await insert_scheduled_post(db_post)
 
             for url in source_urls:
@@ -333,6 +400,11 @@ async def publish_processor(task: Task) -> None:
 
             logger.info("publish.post_created",
                         post_id=post_id, vk_post_id=vk_post_id, tg_ids=tg_message_ids, post_type=post_type)
+
+        # Пост завершился окончательно (успех или ошибка) — считаем его один раз
+        finished += 1
+        async with task._lock:
+            task.progress.current = min(finished, original_total)
 
         processed += 1
         if processed < total:

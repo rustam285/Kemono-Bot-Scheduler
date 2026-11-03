@@ -189,6 +189,12 @@ async def generate_preview(
     )
     schedule = assign_slots(len(post_groups), start_date, time_slots, timezone_name, occupied)
 
+    if len(schedule) < len(post_groups):
+        raise ValueError(
+            f"Недостаточно свободных слотов: назначено {len(schedule)} из {len(post_groups)} постов. "
+            "Добавьте временные слоты или выберите более позднюю дату начала."
+        )
+
     posts = []
     for i, group in enumerate(post_groups):
         source_urls = group.get("source_urls", [])

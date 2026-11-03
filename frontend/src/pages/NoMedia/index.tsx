@@ -1,4 +1,4 @@
-import { useNoMediaPosts, useDeletePost } from "@/api/client";
+import { useNoMediaPosts, useDeletePost, useSettings, api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
@@ -11,13 +11,26 @@ const TYPE_VARIANT: Record<string, "art" | "fursuit" | "video"> = {
 
 function NoMedia() {
   const { data: posts, isLoading } = useNoMediaPosts();
+  const { data: settings } = useSettings();
   const deletePost = useDeletePost();
   const { addToast } = useToast();
   const navigate = useNavigate();
 
-  const handleDelete = async (vkPostId: number) => {
+  // Посты выходят от группы: owner_id стены = -{group_id}
+  const groupId = settings?.vk_group_id;
+  const vkLink = (post: any) =>
+    groupId && post.vk_post_id ? `https://vk.com/wall-${groupId}_${post.vk_post_id}` : null;
+
+  const handleDelete = async (post: any) => {
     try {
-      await deletePost.mutateAsync(vkPostId);
+      if (post.vk_post_id) {
+        await deletePost.mutateAsync(post.vk_post_id);
+      } else if (post.id) {
+        await api.delete(`/scheduled/by-id/${post.id}`);
+      } else {
+        addToast({ title: "Ошибка", description: "Пост не имеет идентификатора", variant: "destructive" });
+        return;
+      }
       addToast({ title: "Удалено", description: "Пост удалён", variant: "success" });
     } catch {
       addToast({ title: "Ошибка", description: "Не удалось удалить пост", variant: "destructive" });
@@ -83,9 +96,9 @@ function NoMedia() {
                         {post.post_text}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {post.vk_post_id && (
+                        {vkLink(post) && (
                           <a
-                            href={`https://vk.com/wall-${post.vk_post_id}`}
+                            href={vkLink(post)!}
                             target="_blank"
                             rel="noopener"
                             className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
@@ -110,7 +123,7 @@ function NoMedia() {
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-red-400"
-                            onClick={() => handleDelete(post.vk_post_id)}
+                            onClick={() => handleDelete(post)}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -154,16 +167,16 @@ function NoMedia() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-red-400"
-                        onClick={() => handleDelete(post.vk_post_id)}
+                        onClick={() => handleDelete(post)}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
                     </div>
                   </div>
                   <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{post.post_text}</p>
-                  {post.vk_post_id && (
+                  {vkLink(post) && (
                     <a
-                      href={`https://vk.com/wall-${post.vk_post_id}`}
+                      href={vkLink(post)!}
                       target="_blank"
                       rel="noopener"
                       className="inline-flex items-center gap-1 text-xs text-accent hover:underline"

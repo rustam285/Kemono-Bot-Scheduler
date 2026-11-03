@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import threading
@@ -30,5 +31,8 @@ def setup_ffmpeg():
 if __name__ == "__main__":
     setup_ffmpeg()
     threading.Thread(target=upgrade_extractors, daemon=True).start()
-    print(">>> Starting FastAPI server on http://0.0.0.0:8000 ...")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    # По умолчанию слушаем только localhost: API без аутентификации,
+    # 0.0.0.0 открывает его всей локальной сети (задайте HOST=0.0.0.0 осознанно)
+    host = os.getenv("HOST", "127.0.0.1")
+    print(f">>> Starting FastAPI server on http://{host}:8000 ...")
+    uvicorn.run("main:app", host=host, port=8000, reload=False)

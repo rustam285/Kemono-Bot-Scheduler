@@ -1,6 +1,6 @@
 const http = require("http");
 
-const URL = "http://localhost:8000/api/health";
+const URL = "http://127.0.0.1:8000/api/health";
 const MAX_WAIT = 60000;
 const INTERVAL = 1000;
 const start = Date.now();

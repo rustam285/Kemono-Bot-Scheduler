@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from services.publisher import publish_processor
 from services.scheduler import generate_preview
 from services.task_store import create_task, run_task
+from config import MAX_MEDIA_PER_POST
 
 router = APIRouter(tags=["publish"])
 
@@ -49,6 +50,14 @@ async def preview_endpoint(body: PreviewRequest):
         raise HTTPException(400, "post_groups must not be empty")
 
     groups_data = [pg.model_dump() for pg in body.post_groups]
+
+    for i, pg in enumerate(body.post_groups):
+        if len(pg.media_item_ids) > MAX_MEDIA_PER_POST:
+            raise HTTPException(
+                400,
+                f"Группа {i + 1}: слишком много медиа ({len(pg.media_item_ids)}), "
+                f"максимум {MAX_MEDIA_PER_POST} на пост",
+            )
 
     try:
         session_key, posts = await generate_preview(
@@ -103,7 +112,9 @@ async def publish_endpoint(body: PublishRequest):
     violations = []
 
     for p in body.posts:
-        if p.scheduled_at:
+        if not p.scheduled_at:
+            violations.append(f"Post {p.id}: scheduled_at обязателен (нет свободного слота)")
+        else:
             dt = datetime.fromisoformat(p.scheduled_at)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
@@ -111,6 +122,11 @@ async def publish_endpoint(body: PublishRequest):
                 violations.append(f"Post {p.id}: scheduled_at must be in the future")
             if dt > one_year:
                 violations.append(f"Post {p.id}: scheduled_at cannot exceed 1 year from now")
+        if len(p.media_items) > MAX_MEDIA_PER_POST:
+            violations.append(
+                f"Post {p.id}: слишком много медиа ({len(p.media_items)}), "
+                f"максимум {MAX_MEDIA_PER_POST} на пост"
+            )
 
     if violations:
         raise HTTPException(400, detail=violations)

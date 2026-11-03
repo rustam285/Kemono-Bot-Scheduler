@@ -7,6 +7,9 @@ load_dotenv()
 
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+SUPABASE_ACCESS_TOKEN: str = os.getenv("SUPABASE_ACCESS_TOKEN", "")
+SUPABASE_WATCHDOG_INTERVAL: int = int(os.getenv("SUPABASE_WATCHDOG_INTERVAL", "900"))
+SUPABASE_RESTORE_TIMEOUT: int = int(os.getenv("SUPABASE_RESTORE_TIMEOUT", "600"))
 VK_API_VERSION: str = os.getenv("VK_API_VERSION", "5.199")
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 MAX_TEMP_SIZE_GB: int = int(os.getenv("MAX_TEMP_SIZE_GB", "3"))
@@ -27,6 +30,9 @@ VK_MAX_SLOT_ATTEMPTS: int = 5
 VK_SLOT_DELAY_SECONDS: int = 1800
 VK_API_MAX_RETRIES: int = 3
 VK_API_RETRY_DELAYS: list[int] = [1, 4, 16]
+
+EXTRACT_MAX_URLS: int = 25
+MAX_MEDIA_PER_POST: int = 10
 
 TG_API_ID: int = int(os.getenv("TG_API_ID", "0"))
 TG_API_HASH: str = os.getenv("TG_API_HASH", "")

@@ -49,6 +49,7 @@ class TaskProgress:
     current: int = 0
     total: int = 0
     stage: str = TaskStage.DOWNLOADING_MEDIA
+    retries: int = 0
 
 
 @dataclass
@@ -73,6 +74,7 @@ class Task:
                 "current": self.progress.current,
                 "total": self.progress.total,
                 "stage": self.progress.stage,
+                "retries": self.progress.retries,
             },
             "results": [
                 {
@@ -95,6 +97,7 @@ class Task:
                 "current": self.progress.current,
                 "total": self.progress.total,
                 "stage": self.progress.stage,
+                "retries": self.progress.retries,
             },
             "results": [
                 {
@@ -147,6 +150,7 @@ def _load_tasks() -> None:
                 task.progress.current = item["progress"].get("current", 0)
                 task.progress.total = item["progress"].get("total", 0)
                 task.progress.stage = item["progress"].get("stage", TaskStage.DOWNLOADING_MEDIA)
+                task.progress.retries = item["progress"].get("retries", 0)
             for r in item.get("results", []):
                 task.results.append(PostResult(
                     post_id=r["post_id"],
@@ -187,17 +191,16 @@ async def cancel_task(task_id: str) -> tuple[bool, str]:
         return False, "Task not found"
 
     async with task._lock:
-        if task.status == TaskStatus.PENDING:
-            task.status = TaskStatus.CANCELLED
-            task.finished_at = datetime.now(timezone.utc).isoformat()
+        if task.status in (TaskStatus.PENDING, TaskStatus.PROCESSING):
+            # PROCESSING-задачу процессор прервёт сам в ближайшей точке проверки
             task._cancel_event.set()
+            if task.status == TaskStatus.PENDING:
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now(timezone.utc).isoformat()
             _persist_tasks()
-            logger.info("task.cancelled", task_id=task_id)
+            logger.info("task.cancel_requested", task_id=task_id, status=task.status.value)
             return True, ""
-        elif task.status == TaskStatus.PROCESSING:
-            return False, "Task is already processing, cannot cancel"
-        else:
-            return False, f"Task is already {task.status.value}"
+        return False, f"Task is already {task.status.value}"
 
 
 async def run_task(task: Task, processor: Any) -> None:
@@ -219,11 +222,13 @@ async def run_task(task: Task, processor: Any) -> None:
         try:
             await processor(task)
             async with task._lock:
-                if not task._cancel_event.is_set():
+                if task._cancel_event.is_set():
+                    task.status = TaskStatus.CANCELLED
+                else:
                     task.status = TaskStatus.COMPLETED
-                    task.finished_at = datetime.now(timezone.utc).isoformat()
                     task.progress.stage = TaskStage.DONE
-                    _persist_tasks()
+                task.finished_at = datetime.now(timezone.utc).isoformat()
+                _persist_tasks()
         except Exception as exc:
             async with task._lock:
                 task.status = TaskStatus.ERROR

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { MediaCard, type MediaItem } from "@/components/MediaCard/MediaCard";
-import { useExtract, api } from "@/api/client";
+import { useExtract, extractApiError, api } from "@/api/client";
 import { useToast } from "@/components/ui/use-toast";
 import { Upload, Plus, Trash2, Link, X, Merge, Ungroup, Loader2 } from "lucide-react";
 
@@ -32,6 +32,7 @@ let _nextGroupId = 1;
 function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onLocalFilesChange, platform, onPlatformChange, onNext }: Step1Props) {
   const [urlInput, setUrlInput] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [extractError, setExtractError] = useState<string | null>(null);
   const extract = useExtract();
   const { addToast } = useToast();
 
@@ -44,27 +45,52 @@ function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onL
   };
 
   const handleAddUrls = async () => {
-    const urls = urlInput.split("\n").map((u) => u.trim()).filter(Boolean);
-    if (!urls.length) return;
-    try {
-      const result = await extract.mutateAsync(urls);
-      const newSources: SourceItem[] = result.items.map((item: any) => ({
-        id: item.id,
-        url: item.source_url,
-        mediaItems: item.media_items.map((m: any) => ({ ...m, selected: true })),
-        alreadyUsed: item.already_used,
-        error: item.error,
-        groupId: null,
-      }));
-      onSourcesChange([...sources, ...newSources]);
-      setUrlInput("");
-      newSources.forEach((s) => {
-        if (s.alreadyUsed) addToast({ title: "Дубликат", description: s.url, variant: "destructive" });
-        if (s.error) addToast({ title: "Ошибка", description: `${s.url}: ${s.error}`, variant: "destructive" });
-      });
-    } catch {
-      addToast({ title: "Ошибка", description: "Не удалось извлечь медиа", variant: "destructive" });
+    const all = urlInput.split("\n").map((u) => u.trim()).filter(Boolean);
+    if (!all.length) return;
+
+    const fresh = all.filter((u) => !sources.some((s) => s.url === u));
+    if (!fresh.length) {
+      setExtractError("Все эти ссылки уже добавлены");
+      return;
     }
+
+    // Бэкенд принимает до 25 ссылок за запрос — шинкуем на чанки
+    const CHUNK = 20;
+    const collected: any[] = [];
+    let failure: string | null = null;
+
+    for (let i = 0; i < fresh.length; i += CHUNK) {
+      try {
+        const result = await extract.mutateAsync(fresh.slice(i, i + CHUNK));
+        collected.push(...result.items);
+      } catch (err) {
+        failure = extractApiError(err);
+        break;
+      }
+    }
+
+    if (!collected.length) {
+      setExtractError(failure || "Не удалось извлечь медиа");
+      addToast({ title: "Ошибка", description: failure || "Не удалось извлечь медиа", variant: "destructive" });
+      return;
+    }
+
+    const newSources: SourceItem[] = collected.map((item: any) => ({
+      id: item.id,
+      url: item.source_url,
+      mediaItems: item.media_items.map((m: any) => ({ ...m, selected: true })),
+      alreadyUsed: item.already_used,
+      error: item.error,
+      groupId: null,
+    }));
+
+    onSourcesChange([...sources, ...newSources]);
+    setUrlInput("");
+    setExtractError(failure ? `Добавлено ${newSources.length}, но часть ссылок не обработалась: ${failure}` : null);
+    newSources.forEach((s) => {
+      if (s.alreadyUsed) addToast({ title: "Дубликат", description: s.url, variant: "destructive" });
+      if (s.error) addToast({ title: "Ошибка", description: `${s.url}: ${s.error}`, variant: "destructive" });
+    });
   };
 
   const handleCombineSelected = () => {
@@ -132,6 +158,9 @@ function Step1Sources({ sources, localFiles, localPreviews, onSourcesChange, onL
         <Button onClick={handleAddUrls} disabled={extract.isPending || !urlInput.trim()} size="sm">
           {extract.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />Извлечение...</> : <><Plus className="w-4 h-4 mr-1" />Добавить</>}
         </Button>
+        {extractError && !extract.isPending && (
+          <p className="text-xs text-red-400">{extractError}</p>
+        )}
       </div>
 
       <div

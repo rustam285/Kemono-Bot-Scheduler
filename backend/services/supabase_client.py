@@ -40,6 +40,12 @@ def _run_with_retry(fn, retries: int = MAX_RETRIES):
                 raise
 
 
+async def recreate_client() -> None:
+    """Пересоздаёт клиент с нуля — например, после восстановления спящего проекта Supabase."""
+    async with _lock:
+        await asyncio.to_thread(_get_client, force=True)
+
+
 async def check_supabase_health() -> bool:
     def _ping():
         try:

@@ -35,12 +35,14 @@ TG_RETRY_DELAYS = [1, 4, 16]
 TG_MAX_RETRIES = 3
 
 def _generate_device_kwargs() -> dict[str, str]:
+    # SystemRandom: распределение то же, но без предсказуемого seed random-модуля
+    rng = random.SystemRandom()
     models = ["Desktop", "PC", "Laptop", "Workstation"]
     versions = ["Windows 10", "Windows 11", "Linux", "macOS"]
     return {
-        "device_model": random.choice(models),
-        "system_version": random.choice(versions),
-        "app_version": f"{random.randint(1, 5)}.{random.randint(0, 9)}.{random.randint(0, 9)}",
+        "device_model": rng.choice(models),
+        "system_version": rng.choice(versions),
+        "app_version": f"{rng.randint(1, 5)}.{rng.randint(0, 9)}.{rng.randint(0, 9)}",
         "lang_code": "ru",
         "system_lang_code": "ru-RU",
     }

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -17,13 +19,15 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
-from config import COOKIES_PATH, MEDIA_DEGRADED_THRESHOLD, MEDIA_DEGRADED_WINDOW
+from config import COOKIES_PATH, DATA_DIR, MEDIA_DEGRADED_THRESHOLD, MEDIA_DEGRADED_WINDOW
 from services.settings_store import get_settings
 
 logger = structlog.get_logger(__name__)
 
 TEMP_BASE = Path(tempfile.gettempdir()) / "vk_scheduler"
 TEMP_BASE.mkdir(parents=True, exist_ok=True)
+
+LOCAL_UPLOAD_DIR = DATA_DIR / "uploads"
 
 TWITTER_DOMAINS = {"twitter.com", "x.com", "t.co"}
 TIKTOK_DOMAINS = {"tiktok.com", "vm.tiktok.com"}
@@ -39,6 +43,51 @@ def _domain_from_url(url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     return host
+
+
+class UnsafeUrlError(Exception):
+    """URL запрещён к запросу: не http/https либо хост указывает на локальную/приватную сеть."""
+
+
+async def _assert_public_http_url(url: str) -> None:
+    """SSRF-защита: только http/https, хост обязан резолвиться в публичный адрес."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise UnsafeUrlError(f"поддерживаются только http/https (получено: {parsed.scheme or 'пусто'})")
+    host = parsed.hostname
+    if not host:
+        raise UnsafeUrlError("URL без хоста")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        raise UnsafeUrlError("некорректный порт")
+
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise UnsafeUrlError(f"не удалось разрешить хост {host}: {exc}")
+
+    for info in infos or []:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            raise UnsafeUrlError(f"хост {host} указывает на запрещённый адрес {ip}")
+
+
+def _resolve_local_upload(url: str) -> Optional[Path]:
+    """Локальный файл, загруженный через /api/upload/media, берём напрямую с диска
+    вместо HTTP-запроса бэкенда к самому себе."""
+    name = urlparse(url).path.rsplit("/", 1)[-1]
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return None
+    candidate = LOCAL_UPLOAD_DIR / name
+    try:
+        if candidate.is_file() and candidate.resolve().is_relative_to(LOCAL_UPLOAD_DIR.resolve()):
+            return candidate
+    except OSError:
+        return None
+    return None
 
 
 def _record_error(domain: str) -> None:
@@ -97,6 +146,7 @@ def _cookies_args() -> list[str]:
 
 
 async def _run_process(cmd: list[str], timeout: int) -> tuple[str, str, int]:
+    proc = None
     try:
         proc = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
@@ -110,7 +160,8 @@ async def _run_process(cmd: list[str], timeout: int) -> tuple[str, str, int]:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace"), proc.returncode
     except asyncio.TimeoutError:
-        _kill_process_tree(proc)
+        if proc is not None:
+            _kill_process_tree(proc)
         raise TimeoutError(f"Process timed out after {timeout}s")
 
 
@@ -313,6 +364,13 @@ async def extract_media(url: str) -> ExtractResult:
 
     result = ExtractResult(source_url=url)
 
+    try:
+        await _assert_public_http_url(url)
+    except UnsafeUrlError as exc:
+        logger.warning("extract.url_rejected", url=url[:100], error=str(exc))
+        result.error = f"Ссылка отклонена: {exc}"
+        return result
+
     if is_twitter_url(url):
         async with _twitter_lock:
             try:
@@ -392,12 +450,40 @@ async def download_media_file(
     task_dir.mkdir(parents=True, exist_ok=True)
 
     url = media_item.original_url or ""
+
+    if media_item.source_tool == "local":
+        local_path = _resolve_local_upload(url)
+        if local_path:
+            logger.info("download.local_upload", path=str(local_path))
+            return local_path
+        logger.warning("download.local_upload_not_found", url=url[:100])
+        return None
+
+    if url:
+        try:
+            await _assert_public_http_url(url)
+            source = media_item.source_url or ""
+            if source and source != url:
+                await _assert_public_http_url(source)
+        except UnsafeUrlError as exc:
+            logger.warning("download.url_rejected", url=url[:100], error=str(exc))
+            return None
+
     ext = _guess_extension(url, media_item.type)
-    filename = f"{media_item.id}{ext}"
+    # id приходит с клиента — очищаем от разделителей путей и проверяем,
+    # что итоговый путь остаётся внутри TEMP_BASE
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", str(media_item.id))[:100] or "media"
+    filename = f"{safe_id}{ext}"
     filepath = task_dir / filename
+    try:
+        if not filepath.resolve().is_relative_to(TEMP_BASE.resolve()):
+            logger.warning("download.path_rejected", path=str(filepath))
+            return None
+    except OSError:
+        return None
 
     settings = await get_settings()
-    timeout = settings.get("ytdlp_timeout_seconds", 60)
+    timeout = settings.get("ytdlp_timeout_seconds", 30)
 
     if is_twitter_url(url) or is_tiktok_url(url):
         return await _download_ytdlp(url, filepath, timeout, max_size_mb)
@@ -430,11 +516,6 @@ def _guess_extension(url: str, media_type: str) -> str:
 
 
 async def _download_ytdlp(url: str, filepath: Path, timeout: int, max_size_mb: int) -> Optional[Path]:
-    settings = await get_settings()
-    max_workers = settings.get("max_download_workers", 3)
-    if is_twitter_url(url):
-        max_workers = 1
-
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
@@ -513,37 +594,83 @@ async def _download_gallerydl(url: str, filepath: Path, timeout: int, max_size_m
 
 async def _download_httpx(url: str, filepath: Path, timeout: int, max_size_mb: int) -> Optional[Path]:
     logger.info("download.httpx.start", url=url)
-    try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            async with client.stream("GET", url) as resp:
-                if resp.status_code >= 400:
-                    logger.error("download.httpx.error", url=url, status=resp.status_code)
-                    return None
 
-                size = 0
-                max_bytes = max_size_mb * 1024 * 1024
-                with open(filepath, "wb") as f:
-                    async for chunk in resp.aiter_bytes(8192):
-                        size += len(chunk)
-                        if size > max_bytes:
-                            f.close()
-                            filepath.unlink(missing_ok=True)
-                            logger.warning("download.httpx.too_large", url=url)
-                            return None
-                        f.write(chunk)
-
-        return filepath
-    except Exception as exc:
-        logger.error("download.httpx.failed", url=url, error=str(exc))
+    # Пишем только внутри TEMP_BASE и без обхода каталогов (../)
+    if ".." in str(filepath):
+        logger.error("download.httpx.bad_path", path=str(filepath))
         return None
+    try:
+        if not filepath.resolve().is_relative_to(TEMP_BASE.resolve()):
+            logger.error("download.httpx.bad_path", path=str(filepath))
+            return None
+    except OSError:
+        return None
+    safe_path = filepath
+
+    # CDN (pbs.twimg.com и др.) троттлят одиночные запросы и не-браузерные UA —
+    # поэтому браузерный User-Agent и до 3 попыток с паузами
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+    }
+    delays = [2, 8]
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+                async with client.stream("GET", url) as resp:
+                    if resp.status_code >= 400:
+                        logger.warning("download.httpx.bad_status", url=url[:100],
+                                       status=resp.status_code, attempt=attempt + 1)
+                    else:
+                        size = 0
+                        max_bytes = max_size_mb * 1024 * 1024
+                        fd = os.open(safe_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+                        try:
+                            with os.fdopen(fd, "wb") as f:
+                                async for chunk in resp.aiter_bytes(8192):
+                                    size += len(chunk)
+                                    if size > max_bytes:
+                                        f.close()
+                                        safe_path.unlink(missing_ok=True)
+                                        logger.warning("download.httpx.too_large", url=url)
+                                        return None
+                                    f.write(chunk)
+                        except BaseException:
+                            safe_path.unlink(missing_ok=True)
+                            raise
+                        return safe_path
+        except Exception as exc:
+            logger.warning("download.httpx.error", url=url[:100],
+                           attempt=attempt + 1, error=str(exc)[:200])
+
+        if attempt < len(delays):
+            await asyncio.sleep(delays[attempt])
+
+    logger.error("download.httpx.all_retries_failed", url=url[:100])
+    return None
 
 
 def _find_downloaded_file(path: Path) -> Optional[Path]:
+    # Сканируем каталог только после проверки: путь без ../ и внутри TEMP_BASE
+    path_str = str(path)
+    if ".." in path_str:
+        return None
+    try:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(TEMP_BASE.resolve()):
+            return None
+    except OSError:
+        return None
+
     if path.exists() and path.is_file():
         return path
 
-    if path.parent.exists():
-        candidates = sorted(path.parent.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    parent = resolved.parent
+    if parent.exists():
+        candidates = sorted(parent.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
         for c in candidates:
             if c.is_file() and c.suffix in (".mp4", ".mkv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".webp"):
                 return c

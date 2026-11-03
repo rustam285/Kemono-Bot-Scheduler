@@ -33,6 +33,9 @@ def _validate_time_slots(slots: list[str]) -> None:
     for s in slots:
         if not pattern.match(s):
             raise HTTPException(400, f"Invalid time slot format: {s!r}, expected HH:MM")
+        hh, mm = s.split(":")
+        if not (0 <= int(hh) < 24 and 0 <= int(mm) < 60):
+            raise HTTPException(400, f"Invalid time slot value: {s!r}")
     if slots != sorted(slots):
         raise HTTPException(400, "time_slots must be sorted in ascending order")
 

@@ -57,6 +57,7 @@ chmod +x start.sh && ./start.sh
 |------------|----------|
 | `SUPABASE_URL` | URL проекта Supabase |
 | `SUPABASE_SERVICE_KEY` | service_role ключ Supabase |
+| `SUPABASE_ACCESS_TOKEN` | Personal access token Supabase ([создать](https://supabase.com/dashboard/account/tokens)) — для авто-восстановления спящего проекта. Опционально |
 | `ENCRYPTION_KEY` | **Обязательный.** Ключ шифрования VK токена (AES-256). Генерация: `python -c "from services.crypto import generate_key; print(generate_key())"` |
 | `VK_TOKEN` | Токен VK (bootstrap, для первого запуска) |
 | `VK_GROUP_ID` | ID группы VK |
@@ -64,6 +65,8 @@ chmod +x start.sh && ./start.sh
 | `TG_API_ID` | API ID приложения Telegram (из my.telegram.org) |
 | `TG_API_HASH` | API Hash приложения Telegram |
 | `TG_PROXY` | SOCKS5/HTTP прокси для MTProto (опционально, для обхода DPI) |
+| `HOST` | Адрес бэкенда. По умолчанию `127.0.0.1` (только локально). `0.0.0.0` открывает API всей сети — API без авторизации, делайте это осознанно |
+| `ALLOWED_ORIGINS` | Разрешённые CORS-источники через запятую (по умолчанию `http://localhost:5173,http://127.0.0.1:5173`) |
 | `LOG_LEVEL` | Уровень логирования (DEBUG/INFO/WARNING/ERROR) |
 | `MAX_TEMP_SIZE_GB` | Макс. размер временных файлов (ГБ) |
 | `MAX_CONCURRENT_TASKS` | Макс. одновременных задач публикации |
@@ -71,6 +74,15 @@ chmod +x start.sh && ./start.sh
 ### settings.json (через UI на /settings)
 
 Все операционные настройки (токен VK, таймзона, слоты, задержки) управляются через страницу `/settings` в интерфейсе.
+
+### Спящий Supabase (free-тариф)
+
+Free-тариф Supabase ставит проект на паузу после ~7 дней неактивности, а «пробуждение» вручную через дашборд небыстрое. В проекте есть два механизма:
+
+1. **Keep-alive пинг (GitHub Actions).** Воркфлоу [`.github/workflows/supabase-keepalive.yml`](.github/workflows/supabase-keepalive.yml) раз в ~3 дня дёргает REST API проекта — работает даже когда ваш ПК выключен. Чтобы он заработал, в настройках репозитория (**Settings → Secrets and variables → Actions**) добавьте секреты `SUPABASE_URL` (`https://<ref>.supabase.co`) и `SUPABASE_SERVICE_KEY` (service_role из `.env`). Учтите: GitHub отключает scheduled-воркфлоу после 60 дней без коммитов — тогда запускайте вручную или сделайте любой коммит.
+2. **Авто-восстановление (watchdog в бэкенде).** Бэкенд проверяет БД при старте и далее каждые `SUPABASE_WATCHDOG_INTERVAL` секунд (по умолчанию 900). Если БД недоступна и задан `SUPABASE_ACCESS_TOKEN` ([personal access token](https://supabase.com/dashboard/account/tokens)), watchdog вызывает Management API `POST /v1/projects/{ref}/restore` и ждёт активации (до `SUPABASE_RESTORE_TIMEOUT`, по умолчанию 600 с), после чего пересоздаёт клиент. Статус виден в `GET /api/health` → поле `supabase_watchdog`. Пока приложение запущено, периодические проверки сами считаются активностью. Токен даёт доступ ко всем проектам аккаунта — храните его только в `.env`.
+
+Keep-alive предотвращает паузу, watchdog — спасает, если пауза всё же случилась (восстановление занимает несколько минут; это быстрее и без ручного тыканья в дашборд).
 
 ## Функции
 

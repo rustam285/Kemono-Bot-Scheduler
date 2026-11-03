@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 
@@ -25,9 +26,20 @@ async def upload_media(file: UploadFile = File(...)):
     filename = f"{file_id}{ext}"
     filepath = UPLOAD_DIR / filename
 
+    # Имя собираем сами (uuid + whitelisted ext), но проверяем явно:
+    # путь записи обязан оставаться внутри UPLOAD_DIR
+    try:
+        inside_upload_dir = filepath.resolve().is_relative_to(UPLOAD_DIR.resolve())
+    except OSError:
+        inside_upload_dir = False
+    if not inside_upload_dir:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
     max_bytes = 500 * 1024 * 1024
     size = 0
-    with open(filepath, "wb") as f:
+    # os.open, как в media_downloader._download_httpx: путь уже проверен выше
+    fd = os.open(filepath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    with os.fdopen(fd, "wb") as f:
         while True:
             chunk = await file.read(8192)
             if not chunk:
@@ -42,7 +54,9 @@ async def upload_media(file: UploadFile = File(...)):
     return {
         "id": file_id,
         "filename": filename,
-        "url": f"http://127.0.0.1:8000/api/upload/media/{filename}",
+        # Относительный URL: работает через vite-proxy и при доступе с других устройств;
+        # бэкенд при публикации берёт файл с диска напрямую (см. _resolve_local_upload)
+        "url": f"/api/upload/media/{filename}",
         "size": size,
         "type": "video" if ext in (".mp4", ".mov", ".webm") else "photo",
     }

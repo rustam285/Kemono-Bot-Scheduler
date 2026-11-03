@@ -1,9 +1,9 @@
 import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { PostCard } from "@/components/PostCard/PostCard";
-import { usePublish, useTaskStatus } from "@/api/client";
+import { usePublish, useTaskStatus, useCancelTask, useSettings, extractApiError } from "@/api/client";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, CheckCircle, XCircle, ArrowLeft } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, ArrowLeft, Ban } from "lucide-react";
 
 interface PreviewPost {
   id: string;
@@ -24,17 +24,37 @@ interface Step3Props {
 
 function Step3Preview({ posts, onPostsChange, onBack, onDone }: Step3Props) {
   const publish = usePublish();
+  const cancelTask = useCancelTask();
+  const { data: settings } = useSettings();
   const { addToast } = useToast();
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const taskStatus = useTaskStatus(taskId);
 
+  // Владелец стены: посты выходят от группы, поэтому owner_id = -{group_id}
+  const groupId = settings?.vk_group_id;
+
   const handlePublish = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const result = await publish.mutateAsync({ posts });
       setTaskId(result.task_id);
       addToast({ title: "Публикация начата", description: `Задача: ${result.task_id}`, variant: "success" });
-    } catch {
-      addToast({ title: "Ошибка", description: "Не удалось начать публикацию", variant: "destructive" });
+    } catch (err) {
+      addToast({ title: "Ошибка", description: extractApiError(err), variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!taskId) return;
+    try {
+      await cancelTask.mutateAsync(taskId);
+      addToast({ title: "Отмена", description: "Задача будет остановлена после текущего поста", variant: "default" });
+    } catch (err) {
+      addToast({ title: "Ошибка", description: extractApiError(err), variant: "destructive" });
     }
   };
 
@@ -78,12 +98,14 @@ function Step3Preview({ posts, onPostsChange, onBack, onDone }: Step3Props) {
   const isRunning = status === "processing" || status === "pending";
   const isDone = status === "completed";
   const isError = status === "error";
+  const isCancelled = status === "cancelled" || status === "interrupted";
+  const isFinished = isDone || isError || isCancelled;
 
   const successCount = taskStatus.data?.results?.filter((r: any) => r.status === "ok").length || 0;
   const errorCount = taskStatus.data?.results?.filter((r: any) => r.status === "error").length || 0;
   const progress = taskStatus.data?.progress;
 
-  if (isDone || isError) {
+  if (isFinished) {
     return (
       <div className="space-y-6">
         <div className="text-center py-8">
@@ -93,7 +115,7 @@ function Step3Preview({ posts, onPostsChange, onBack, onDone }: Step3Props) {
             <XCircle className="w-16 h-16 mx-auto text-red-500 mb-4" />
           )}
           <h2 className="text-2xl font-bold mb-2">
-            {isDone ? "Публикация завершена" : "Ошибка публикации"}
+            {isDone ? "Публикация завершена" : isCancelled ? "Публикация отменена" : "Ошибка публикации"}
           </h2>
           <div className="flex justify-center gap-6 text-sm">
             <div>
@@ -120,13 +142,25 @@ function Step3Preview({ posts, onPostsChange, onBack, onDone }: Step3Props) {
               >
                 <span className="text-sm">Пост {i + 1}</span>
                 {r.status === "ok" ? (
-                  <a
-                    href={`https://vk.com/wall-${taskStatus.data?.results?.[0]?.vk_post_id ? "" : ""}${r.vk_post_id}`}
-                    target="_blank"
-                    className="text-sm text-accent hover:underline"
-                  >
-                    VK: {r.vk_post_id}
-                  </a>
+                  <span className="flex items-center gap-2">
+                    {r.vk_post_id && groupId ? (
+                      <a
+                        href={`https://vk.com/wall-${groupId}_${r.vk_post_id}`}
+                        target="_blank"
+                        rel="noopener"
+                        className="text-sm text-accent hover:underline"
+                      >
+                        VK: {r.vk_post_id}
+                      </a>
+                    ) : (
+                      <span className="text-sm text-blue-400">Telegram ✓</span>
+                    )}
+                    {r.error && (
+                      <span className="text-xs text-yellow-500" title="Не все медиа удалось загрузить">
+                        ⚠ {r.error}
+                      </span>
+                    )}
+                  </span>
                 ) : (
                   <span className="text-sm text-red-400">{r.error}</span>
                 )}
@@ -168,22 +202,29 @@ function Step3Preview({ posts, onPostsChange, onBack, onDone }: Step3Props) {
 
       {isRunning && progress && (
         <div className="bg-muted/50 rounded-lg p-4">
-          <div className="flex items-center gap-3 mb-2">
-            <Loader2 className="w-4 h-4 animate-spin text-accent" />
-            <span className="text-sm font-medium">
-              {progress.stage === "downloading_media" && "Загрузка медиа..."}
-              {progress.stage === "uploading_media" && "Загрузка в VK..."}
-              {progress.stage === "creating_posts" && "Создание постов..."}
-            </span>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-4 h-4 animate-spin text-accent" />
+              <span className="text-sm font-medium">
+                {progress.stage === "downloading_media" && "Загрузка медиа..."}
+                {progress.stage === "uploading_media" && "Загрузка в VK..."}
+                {progress.stage === "creating_posts" && "Создание постов..."}
+                {progress.stage === "done" && "Завершение..."}
+              </span>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleCancel} disabled={cancelTask.isPending}>
+              <Ban className="w-3.5 h-3.5 mr-1" /> Отменить
+            </Button>
           </div>
           <div className="w-full bg-background rounded-full h-2">
             <div
               className="bg-accent h-2 rounded-full transition-all duration-300"
-              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+              style={{ width: `${progress.total ? (progress.current / progress.total) * 100 : 0}%` }}
             />
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {progress.current} / {progress.total}
+            {progress.retries ? ` · повторных попыток: ${progress.retries}` : ""}
           </p>
         </div>
       )}
@@ -192,8 +233,11 @@ function Step3Preview({ posts, onPostsChange, onBack, onDone }: Step3Props) {
         <Button variant="outline" onClick={onBack} disabled={isRunning}>
           <ArrowLeft className="w-4 h-4 mr-1" /> Назад
         </Button>
-        <Button onClick={handlePublish} disabled={isRunning || posts.length === 0}>
-          {isRunning ? (
+        <Button
+          onClick={handlePublish}
+          disabled={isRunning || submitting || posts.length === 0}
+        >
+          {isRunning || submitting ? (
             <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Публикация...</>
           ) : (
             `Опубликовать (${posts.length})`

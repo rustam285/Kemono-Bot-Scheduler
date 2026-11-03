@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSettings, usePreview } from "@/api/client";
+import { useSettings, usePreview, extractApiError } from "@/api/client";
 import { useToast } from "@/components/ui/use-toast";
 import { X, Plus, Clock, Loader2 } from "lucide-react";
 import type { SourceItem } from "./Step1Sources";
@@ -123,8 +123,11 @@ function Step2Schedule({
       onPreviewResult(result.posts);
       onNext();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Не удалось сгенерировать предпросмотр";
-      addToast({ title: "Ошибка предпросмотра", description: msg, variant: "destructive" });
+      addToast({
+        title: "Ошибка предпросмотра",
+        description: extractApiError(err),
+        variant: "destructive",
+      });
     }
   };
 
